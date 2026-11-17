@@ -117,7 +117,7 @@ export async function createJob(env: Env, spec: JobSpec): Promise<{ job: JobRow;
     `INSERT OR IGNORE INTO jobs (id, idempotency_key, line, mode, provider, state, character_id, master_url, aspect, spec_json,
        estimated_credits, max_attempts, created_at, updated_at)
      VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?)`,
-  ).bind(id, key, spec.line, spec.mode, spec.provider ?? (spec.mode === "live" && spec.line === "B" ? "runninghub-nb" : providerForLine(spec.line)), spec.protagonist, spec.master_url ?? null, spec.aspect,
+  ).bind(id, key, spec.line, spec.mode, spec.provider ?? (spec.mode === "live" && spec.line === "B" ? "runninghub-qwen" : providerForLine(spec.line)), spec.protagonist, spec.master_url ?? null, spec.aspect,
     JSON.stringify(spec), estimateCredits(spec, env), maxAttempts(env, spec.mode), now, now).run();
   if (ins.meta.changes) {
     const steps: D1PreparedStatement[] = [];

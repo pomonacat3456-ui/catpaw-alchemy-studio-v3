@@ -40,7 +40,7 @@ function mockFetch() {
   }) as typeof fetch;
 }
 async function prodEnv(over: Record<string, unknown> = {}) {
-  const n = (await DB.prepare("SELECT COUNT(*) n FROM jobs WHERE mode='live' AND provider='runninghub-nb' AND provider_task_id IS NOT NULL").first<any>()).n;
+  const n = (await DB.prepare("SELECT COUNT(*) n FROM jobs WHERE mode='live' AND line='B' AND provider_task_id IS NOT NULL").first<any>()).n;
   return { ...(env as any), ENVIRONMENT: "production", LIVE_PROVIDERS_ENABLED: "true", OWNER_LIVE_APPROVAL_ID: "owner-test-approval",
     RUNNINGHUB_API_KEY: KEY, LIVE_MAX_SUBMISSIONS_B: String(n + 1), BUDGET_SCOPE: "production-mock", ...over };
 }
@@ -81,7 +81,7 @@ describe("image sniff / auto QA", () => {
 describe("line B live (RunningHub 全能图片V1, mocked)", () => {
   it("submit -> poll -> R2 image -> auto QA -> review; points charged; own budget scope", async () => {
     const e = await prodEnv();
-    let job = await bQueued(e);
+    let job = await bQueued(e, { provider: "runninghub-nb" });
     expect(job.state).toBe("queued");
     expect(job.provider).toBe("runninghub-nb");
     expect(job.estimated_credits).toBe(20);
@@ -145,5 +145,28 @@ describe("line B live (RunningHub 全能图片V1, mocked)", () => {
     const r = await livePoll(e, job, { transition, failOrRetry });
     expect(r.job.state).toBe("failed");
     expect(r.job.last_error).toBe("provider_failed:RH_Nano_Banana_Image2Image: Image generation failed. content guidelines.");
+  });
+
+  it("default B provider is the Qwen Image Edit2509 app (node 14 image / 131 prompt / 21 consistency); same R2 + auto-QA path", async () => {
+    const e = await prodEnv();
+    let job = await bQueued(e);
+    expect(job.provider).toBe("runninghub-qwen");
+    job = await run(e, job);
+    const body = JSON.parse(calls.find((c) => c.url.endsWith("/ai-app/run"))!.body!);
+    expect(body.webappId).toBe("1977675852563513346");
+    expect(body.nodeInfoList).toEqual([
+      { nodeId: "14", fieldName: "image", fieldValue: "api/uploaded_master.png" },
+      { nodeId: "131", fieldName: "text", fieldValue: expect.stringContaining("Keep this exact character") },
+      { nodeId: "21", fieldName: "strength_model", fieldValue: "0.7" },
+    ]);
+    outputsSeq = [done()];
+    const r = await livePoll(e, job, { transition, failOrRetry });
+    expect(r.job.state).toBe("review");
+  });
+
+  it("line B cap is one total across B providers", async () => {
+    const e = await prodEnv();
+    await run(e, await bQueued(e, { provider: "runninghub-nb" }));
+    await expect(run(e, await bQueued(e))).rejects.toMatchObject({ status: 403 });
   });
 });

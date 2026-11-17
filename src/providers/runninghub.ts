@@ -21,6 +21,16 @@ export function nbNodeInfo(fileName: string, prompt: string, width = 900, height
   ];
 }
 
+/** RunningHub AI app 「移除、换背景、换色、模特图、改文字 - Qwen Image Edit2509」 (open-weight model; output keeps the input size). */
+export const DEFAULT_QWEN_WEBAPP_ID = "1977675852563513346";
+export function qwenNodeInfo(fileName: string, prompt: string, consistency = 0.7) {
+  return [
+    { nodeId: "14", fieldName: "image", fieldValue: fileName },
+    { nodeId: "131", fieldName: "text", fieldValue: prompt },
+    { nodeId: "21", fieldName: "strength_model", fieldValue: String(consistency) },
+  ];
+}
+
 /** Swappable for tests (mocked fetch). Production uses global fetch. */
 export const providerDeps: { fetch: typeof fetch } = { fetch: (...a: Parameters<typeof fetch>) => fetch(...a) };
 

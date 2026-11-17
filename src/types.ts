@@ -20,6 +20,7 @@ export interface Env {
   LIVE_MAX_SUBMISSIONS_B?: string; // line B (runninghub-nb) live submissions allowed in total (default 0 = closed)
   LIVE_B_BUDGET_SCOPE?: string; // default production-live-b (RunningHub points)
   LIVE_POINTS_IMAGE?: string; // points estimate per B image (default 20)
+  RUNNINGHUB_QWEN_WEBAPP_ID?: string; // default 1977675852563513346 (Qwen Image Edit2509 app)
   RUNNINGHUB_NB_WEBAPP_ID?: string; // default 1960491621961953282 「全能图片V1」
   LIVE_BUDGET_SCOPE?: string; // default production-live (RunningHub coins)
   LIVE_COINS_5S?: string; // estimate per 5s H3 segment

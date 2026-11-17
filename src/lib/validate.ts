@@ -4,7 +4,7 @@ import { buildALinePrompt, buildBLinePrompt, type ALineLook } from "./prompt";
 /** Live providers wired per line. */
 export const LIVE_PROVIDERS_LINE_A = ["runninghub-h3", "pixverse"];
 /** Line B live: RunningHub AI app 「全能图片V1」 (Nano Banana image edit of the approved Master). */
-export const LIVE_PROVIDERS_LINE_B = ["runninghub-nb"];
+export const LIVE_PROVIDERS_LINE_B = ["runninghub-qwen", "runninghub-nb"]; // qwen first = default (nano banana moderation rejects the MZ_003 Master)
 
 export const LINES: Record<Line, { name: string; kind: "video" | "image"; minSeg: number; maxSeg: number }> = {
   A: { name: "A 短影音（貓掌江湖／喵台灣）", kind: "video", minSeg: 1, maxSeg: 3 },

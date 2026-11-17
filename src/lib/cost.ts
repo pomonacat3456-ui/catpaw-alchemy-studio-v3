@@ -27,6 +27,6 @@ export function estimateCredits(spec: JobSpec, env?: Partial<Env>): number {
 
 export function creditUnit(mode: string, provider?: string) {
   if (mode === "live" && provider === "pixverse") return "pixverse-credit";
-  if (mode === "live" && provider === "runninghub-nb") return "runninghub-point";
+  if (mode === "live" && (provider === "runninghub-nb" || provider === "runninghub-qwen")) return "runninghub-point";
   return mode === "live" ? "runninghub-coin" : "mock-credit";
 }

@@ -2,7 +2,7 @@ import { HttpError, type Env, type JobRow, type JobSpec } from "./types";
 import { LIVE_PROVIDERS_LINE_A, LIVE_PROVIDERS_LINE_B, liveAllowed } from "./lib/validate";
 import { autoImageQa } from "./lib/image";
 import { PixVerseClient, pixGeneratePayload, type PixBalance } from "./providers/pixverse";
-import { DEFAULT_H3_WORKFLOW_ID, DEFAULT_NB_WEBAPP_ID, IMAGE_TYPES, nbNodeInfo, ProviderError, RunningHubClient, h3NodeInfo, providerDeps, type Balance } from "./providers/runninghub";
+import { DEFAULT_H3_WORKFLOW_ID, DEFAULT_NB_WEBAPP_ID, DEFAULT_QWEN_WEBAPP_ID, IMAGE_TYPES, nbNodeInfo, qwenNodeInfo, ProviderError, RunningHubClient, h3NodeInfo, providerDeps, type Balance } from "./providers/runninghub";
 
 const MAX_MASTER_BYTES = 30 * 1024 * 1024;
 
@@ -113,8 +113,9 @@ export async function liveSubmit(env: Env, job: JobRow) {
   const claimTag = `claim:${job.id}:${crypto.randomUUID()}`;
   const claim = await env.DB.prepare(
     `UPDATE jobs SET provider_task_id = ? WHERE id = ? AND state = 'queued' AND mode = 'live'
-       AND (SELECT COUNT(*) FROM jobs WHERE mode = 'live' AND provider = ? AND provider_task_id IS NOT NULL) < ?`,
-  ).bind(claimTag, job.id, job.provider, cap).run();
+       AND (SELECT COUNT(*) FROM jobs WHERE mode = 'live' AND provider_task_id IS NOT NULL
+            AND (CASE WHEN ? = 'B' THEN line = 'B' ELSE provider = ? END)) < ?`,
+  ).bind(claimTag, job.id, job.line, job.provider, cap).run(); // line B: one total cap across all B providers
   if (!claim.meta.changes) throw new HttpError(403, "live_submission_cap_reached", { cap, provider: job.provider });
   const unclaim = () => env.DB.prepare("UPDATE jobs SET provider_task_id = NULL WHERE id = ? AND provider_task_id = ?").bind(job.id, claimTag).run();
 
@@ -164,6 +165,10 @@ export async function liveSubmit(env: Env, job: JobRow) {
       extraMeta = { provider: PIX, model: payload.model, quality: payload.quality, duration: payload.duration, img_id: payload.img_id,
         credits_reported_at_submit: g.credits, credits_over_hard_cap: g.credits != null && g.credits > hard };
       if (g.credits != null && g.credits > hard) await logEv(env, job.id, "provider_credits_over_hard_cap", { credits: g.credits, hard_cap: hard });
+    } else if (isB && job.provider === "runninghub-qwen") {
+      const webappId = env.RUNNINGHUB_QWEN_WEBAPP_ID || DEFAULT_QWEN_WEBAPP_ID;
+      taskId = await rh!.runApp(webappId, qwenNodeInfo(String(uploaded!), spec.prompt)); // PAID
+      extraMeta = { provider: "runninghub-qwen", webapp_id: webappId, uploaded_file: uploaded!, size: "same_as_master" };
     } else if (isB) {
       const webappId = env.RUNNINGHUB_NB_WEBAPP_ID || DEFAULT_NB_WEBAPP_ID;
       taskId = await rh!.runApp(webappId, nbNodeInfo(String(uploaded!), spec.prompt)); // PAID
