@@ -32,20 +32,28 @@ def main():
     logf = os.path.join(outdir, "run.log")
     def log(o):
         with open(logf, "a") as f: f.write(json.dumps(o, ensure_ascii=False) + "\n")
+    h = json.loads(subprocess.run(["curl", "-sS", BASE + "/health"], capture_output=True, text=True).stdout)
+    if h.get("live_providers") is not True: print("live not enabled on this edge yet"); sys.exit(5)  # avoid binding an override to a blocked job
     prov = "pixverse" if line == "A" else "runninghub-qwen"
     bal = adm("GET", "/api/provider/balance" + ("?provider=pixverse" if line == "A" else ""))
     b = bal.get("balance", bal); before = b.get("credits") if line == "A" else b.get("remainPoint")
     need = 45 if line == "A" else 25
     print("balance_before", before)
     if before is None or float(before) < need: log({"run": n, "stop": "insufficient_or_unknown_balance", "balance": before}); sys.exit(4)
-    ov = adm("POST", "/api/admin/canon/live-override", {"character_id": "MZ_003", "master_url": MASTER, "approver": approver,
-             "reason": f"line {line} automation run {n}: {ref}", "ttl_hours": 1})
-    body = {"line": line, "mode": "live", "protagonist": "MZ_003", "master_url": MASTER, "auto_preflight": True, "provider": prov,
-            "look": LOOK, "client_ref": f"line{line}-auto-2026-11-17-{n}"}
-    body.update({"segments": [5], "images": 0} if line == "A" else {"images": 1, "scene": sys.argv[5]})
-    j = adm("POST", "/api/jobs", body); job = j.get("job", j); jid = job.get("jobId")
-    print("job", jid, job.get("state"), job.get("blocked_reasons"), j.get("error"))
-    log({"run": n, "override": (ov.get("override") or ov).get("id"), "jobId": jid, "state": job.get("state"), "blocked": job.get("blocked_reasons")})
+    resume = os.environ.get("RESUME_JOB")  # re-preflight a job that was blocked before any paid call (keeps its bound override)
+    if resume:
+        cur = adm("GET", f"/api/jobs/{resume}")
+        job = cur if cur.get("state") == "ready" else adm("POST", f"/api/jobs/{resume}/preflight").get("job", {})
+        jid = resume
+    else:
+        ov = adm("POST", "/api/admin/canon/live-override", {"character_id": "MZ_003", "master_url": MASTER, "approver": approver,
+                 "reason": f"line {line} automation run {n}: {ref}", "ttl_hours": 1})
+        body = {"line": line, "mode": "live", "protagonist": "MZ_003", "master_url": MASTER, "auto_preflight": True, "provider": prov,
+                "look": LOOK, "client_ref": f"line{line}-auto-2026-11-17-{n}"}
+        body.update({"segments": [5], "images": 0} if line == "A" else {"images": 1, "scene": sys.argv[5]})
+        j = adm("POST", "/api/jobs", body); job = j.get("job", j); jid = job.get("jobId")
+        print("job", jid, job.get("state"), job.get("blocked_reasons"), j.get("error"))
+        log({"run": n, "override": (ov.get("override") or ov).get("id"), "jobId": jid, "state": job.get("state"), "blocked": job.get("blocked_reasons")})
     if job.get("state") != "ready": sys.exit(2)
     adm("POST", f"/api/jobs/{jid}/live-approve", {"approval_ref": ref})
     adm("POST", f"/api/jobs/{jid}/enqueue")

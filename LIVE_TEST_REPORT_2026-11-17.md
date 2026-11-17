@@ -81,3 +81,28 @@ Observations for human review: Qwen keeps the Master pose almost unchanged. Run 
 Budget: `production-live-b` reserved 60 is held by design until deliver/commit. The 3 jobs are in `review`.
 
 Live was turned off afterwards. The plain production redeploy set LIVE_PROVIDERS_ENABLED to false and LIVE_MAX_SUBMISSIONS_B to 0, OWNER_LIVE_APPROVAL_ID was deleted, and /health showed live_providers:false.
+
+## Line A automation — MZ_003 焚天赤焰喵, PixVerse (owner t129u 「自動可以跑完就好」, t130u 「沒有上限，測順來」)
+
+Runner: `tools/autorun.py A <n> ...`. Each run does a PixVerse balance check, creates a single-use override (approver `owner 2026-11-17 14:47`), creates the job (a-line-v2, v6-max, 540p, 5s, 9:16, no audio), then live-approves, enqueues and submits. The Worker polls, downloads, stores the clip in R2, and runs the **automated technical video QA**: mp4 box probe (ftyp/moov/mvhd/tkhd), duration 5s ±0.6, 9:16 ±4 %, short side ≥512, provider ok. A pass goes to `review`; a fail goes to `failed` with no paid retry. Costume and hands are not blocking.
+
+| run | job | task | result | credits | balance before → after |
+|---|---|---|---|---|---|
+| 1 | cpa3-A-20261117-f94e203f57 | 435765194621330 | review; 592×1024, 5.04 s | 45 | 525 → 480 |
+| 3 | cpa3-A-20261117-99c34486a5 | 435765448253883 | review; 592×1024, 5.04 s | 45 | 480 → 435 |
+| 4 | cpa3-A-20261117-0c746fbdca | 435765652648096 | review; 592×1024, 5.04 s | 45 | 435 → 390 |
+
+Run 1 was first created during the deploy propagation window and came back `blocked: live_providers_not_enabled` (no paid call). It was re-preflighted with its bound override and then ran.
+
+Run 2 (cpa3-A-20261117-f55e4d5e5f) was blocked because the override was still bound to run 1. It was cancelled with no paid call and no charge.
+
+The runner now checks `/health` live_providers before it creates an override.
+
+Fixes: the `production-live` internal ledger limit went from 400 to 2000 (migration 0006). Held reservations (H3 350 + PixVerse 35, kept until deliver) had blocked enqueue. This is a ledger only; the real guard is the provider balance.
+
+Palette sanity (`tools/palette_check.py`) is non-blocking:
+- How it works: rembg mask, then the head/hair band (top 35 % of the character), comparing the saturated-red share with the near-white share. For video it takes the median over 5 frames.
+- It flags B run5 (white hair: red 0.456, white 0.121).
+- It passes all the other B stills and A clips (A runs: red 0.757 / 0.805 / 0.739).
+
+Live was turned off afterwards. The plain production redeploy set live_providers to false, OWNER_LIVE_APPROVAL_ID was deleted, and the 3 clips are in `review` (not delivered or published).

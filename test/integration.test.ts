@@ -15,7 +15,7 @@ describe("health & auth", () => {
     const d: any = await r.json();
     expect(r.status).toBe(200);
     expect(d).toMatchObject({ ok: true, d1: "ok", mock: true, paid: false, published: false, live_providers: false, rebuild: "fresh-rebuild-not-zip-restore" });
-    expect(d.schema_version).toBe("0005_line_b_live_budget.sql");
+    expect(d.schema_version).toBe("0006_line_a_live_budget.sql");
   });
   it("API requires the admin key", async () => {
     expect((await api("GET", "/api/jobs", undefined, { "x-admin-key": "wrong" })).status).toBe(401);
