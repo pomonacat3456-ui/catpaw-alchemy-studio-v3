@@ -60,3 +60,24 @@
 - owner（card t128s575）：「這支直接過關，人手也沒關係」；先前 t128u：「很好啊，她就是火紅的辣」。
 - owner 接受 MZ_003 此支影片的較暴露服裝與擬人手，覆蓋內部 QA FAIL。
 - job `cpa3-A-20261117-a24722d2ed` 經正常 admin 路徑 qa → review → approved（approver `owner 2026-11-17 14:23`），另記 `owner_qa_override` 事件。未發布、未 deliver、live 維持關閉、CANON Sheet 未修改。
+
+## Line B automation — MZ_003 焚天赤焰喵 (owner 14:26 「B線也測自動化」)
+
+Pipeline per run: balance check (RunningHub plan 點數) → single-use CANON override (approver `owner 2026-11-17 14:26`) → create live B job → live-approve → enqueue → paid submit → poll → download → R2 `live/<job>/<task>.png` → automated technical QA (decodable PNG/JPEG/WebP, ≥10 KB, short side ≥512, 9:16 ±3 %) → `review`. Per the owner, costume and human-like hands are accepted, so the automated check is technical only. Nothing was delivered or published.
+
+| run | job | provider | result | 點數 charged | balance before → after |
+|---|---|---|---|---|---|
+| 1 | cpa3-B-20261117-2b3fbe57c4 | runninghub-nb (全能图片V1 / Nano Banana) | provider 805 content-guideline rejection | 0 | 17587.77 → 17587.77 |
+| 2 | cpa3-B-20261117-2750725745 | runninghub-nb (tasteful prompt) | 805 rejection | 0 | 17587.77 → 17587.77 |
+| 3 | cpa3-B-20261117-edec63783a | runninghub-nb (neutral background-only prompt) | 805 rejection, so the Master image itself is rejected | 0 | 17587.77 → 17587.77 |
+| 4 | cpa3-B-20261117-ba01931334 | runninghub-qwen (Qwen Image Edit2509 app 1977675852563513346) | review, 1536×2728 PNG | 20.74 | 17587.77 → 17567.03 |
+| 5 | cpa3-B-20261117-6c858983a9 | runninghub-qwen | review, 768×1360 PNG | 22.95 | 17567.03 → 17544.08 |
+| 6 | cpa3-B-20261117-23322f2b5a | runninghub-qwen | review, 768×1360 PNG | 19.21 | 17544.08 → 17524.87 |
+
+Fixes: the provider failure reason was `[object Object]` and now shows the readable node and message. The default B provider is now Qwen Image Edit2509, because Nano Banana rejects this Master. Line B has one total cap across B providers.
+
+Observations for human review: Qwen keeps the Master pose almost unchanged. Run 4 barely changed the scene. In run 5 the hair drifted to white (CANON drift), which the technical QA does not catch. Run 6 is closest to the brief.
+
+Budget: `production-live-b` reserved 60 is held by design until deliver/commit. The 3 jobs are in `review`.
+
+Live was turned off afterwards. The plain production redeploy set LIVE_PROVIDERS_ENABLED to false and LIVE_MAX_SUBMISSIONS_B to 0, OWNER_LIVE_APPROVAL_ID was deleted, and /health showed live_providers:false.

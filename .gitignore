@@ -10,3 +10,4 @@ live-test/*.mp4
 live-test/frames/
 live-test/*.log
 live-test/frames_pixverse/
+live-test/lineB/
