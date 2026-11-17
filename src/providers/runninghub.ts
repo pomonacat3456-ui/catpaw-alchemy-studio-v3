@@ -108,7 +108,13 @@ export class RunningHubClient {
   async outputs(taskId: string, types: string[] = VIDEO_TYPES): Promise<OutputsResult> {
     const p = await this.postJson("/task/openapi/outputs", { apiKey: this.apiKey, taskId });
     const code = Number(p?.code);
-    if (code === 805) return { status: "failed", code, reason: this.scrub(p?.data?.failedReason ?? p?.msg ?? "failed") };
+    if (code === 805) {
+      const fr = p?.data?.failedReason;
+      const reason = fr && typeof fr === "object"
+        ? [fr.node_name, fr.exception_message].filter(Boolean).join(": ") || JSON.stringify(fr).slice(0, 300)
+        : fr ?? p?.msg ?? "failed";
+      return { status: "failed", code, reason: this.scrub(reason) };
+    }
     if (code === 0 && Array.isArray(p.data) && p.data.length) {
       const v = p.data.find((d: any) => types.includes(String(d.fileType ?? "").toLowerCase()) ||
         types.some((e) => String(d.fileUrl ?? "").toLowerCase().split("?")[0].endsWith("." + e)));

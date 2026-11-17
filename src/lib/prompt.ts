@@ -100,6 +100,7 @@ export function buildBLinePrompt(look: ALineLook, scene?: string): BuiltPrompt {
     isMagicOnly(look.weapon) ? `No weapon; ${clean(look.magic) || "elemental magic"} effects only.` : `Weapon: ${clean(look.weapon)}.`,
     `New photo: ${clean(scene) || clean(look.setting) || "a three-quarter portrait on a dark smoky stage"}.`,
     "Vertical 9:16 portrait photograph, single character, Taiwanese glove-puppet (布袋戲偶) photo-shoot lighting, sharp detail.",
+    "Tasteful, family-friendly fantasy portrait: elegant pose, robes layered and fully closed over the chest, nothing suggestive.",
     "No text, no watermark, no logo, no extra characters.",
   ].filter(Boolean).join(" ");
   return { prompt, negative_prompt: "text, watermark, logo, extra characters, duplicate character, deformed, extra limbs, blurry" };

@@ -137,4 +137,13 @@ describe("line B live (RunningHub 全能图片V1, mocked)", () => {
     expect(j.state).toBe("blocked");
     expect(JSON.parse(j.blocked_reasons!)).toContain("live_line_B_requires_exactly_one_image");
   });
+
+  it("provider moderation failure reports the readable reason (not [object Object]) and charges nothing", async () => {
+    const e = await prodEnv();
+    const job = await run(e, await bQueued(e));
+    outputsSeq = [{ code: 805, msg: "APIKEY_TASK_STATUS_ERROR", data: { failedReason: { node_name: "RH_Nano_Banana_Image2Image", exception_message: "Image generation failed. content guidelines." } } }];
+    const r = await livePoll(e, job, { transition, failOrRetry });
+    expect(r.job.state).toBe("failed");
+    expect(r.job.last_error).toBe("provider_failed:RH_Nano_Banana_Image2Image: Image generation failed. content guidelines.");
+  });
 });
