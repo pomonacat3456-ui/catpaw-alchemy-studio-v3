@@ -55,3 +55,8 @@
 - ❌ 服裝不端莊：f_01 明顯乳溝、f_01/f_03 高衩露腿。
 - ❌ 質感偏數位繪畫／動漫，非布袋戲偶。
 - 根因：image-to-video 以 Master 為第一幀，Master 本身即擬人手、低胸高衩；prompt 只能改善後段動作。要通過需先產出符合規範的新 Master（貓掌、端莊服裝、偶質感）。
+
+### Owner 覆核（14:23 Asia/Taipei）：通過
+- owner（card t128s575）：「這支直接過關，人手也沒關係」；先前 t128u：「很好啊，她就是火紅的辣」。
+- owner 接受 MZ_003 此支影片的較暴露服裝與擬人手，覆蓋內部 QA FAIL。
+- job `cpa3-A-20261117-a24722d2ed` 經正常 admin 路徑 qa → review → approved（approver `owner 2026-11-17 14:23`），另記 `owner_qa_override` 事件。未發布、未 deliver、live 維持關閉、CANON Sheet 未修改。
