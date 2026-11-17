@@ -1,0 +1,230 @@
+# CatPaw Alchemy v3 staging live verification  base=https://catpaw-alchemy-v3-staging.gogototo24.workers.dev  run=verify-20261117101427  at=2026-11-17 10:14:27 CST
+## 1. /health
+{
+  "ok": true,
+  "service": "catpaw-alchemy-studio-v3",
+  "version": "3.0.0-rebuild.1",
+  "environment": "staging",
+  "rebuild": "fresh-rebuild-not-zip-restore",
+  "d1": "ok",
+  "schema_version": "0002_staging_fixtures.sql",
+  "mock": true,
+  "paid": false,
+  "published": false,
+  "live_providers": false,
+  "publish_gate": "closed",
+  "secrets_configured": {
+    "admin_key": true,
+    "callback_hmac": true
+  },
+  "time": "2026-11-17T02:14:27.548Z"
+}
+  ✅ health 200 (got 200)
+  ✅ health mock (got true)
+  ✅ health paid (got false)
+  ✅ health published (got false)
+## 2. auth
+  ✅ wrong admin key -> 401 (got 401)
+## 3.A line A full mock flow
+→ POST /api/jobs body={"line":"A","mode":"mock","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","segments":[5,15],"prompt":"verify-20261117101427 line A 全母喵布袋戲偶"}
+← HTTP 201 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "draft", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": [], "deduplicated": false}
+  ✅ A create 201 (got 201)
+  jobId=cpa3-A-20261117-d671c3620f
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/preflight 
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "ready", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ A preflight ready (got ready)
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/enqueue 
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "queued", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ A queued (got queued)
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/run 
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "running", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1", "blocked_reasons": []}
+  ✅ A running (got running)
+→ POST /api/callbacks/runninghub-h3 (signed) body={"event_id":"verify-20261117101427-A-ok","job_id":"cpa3-A-20261117-d671c3620f","provider_task_id":"mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1","status":"succeeded"}
+← HTTP 200 {"duplicate": false, "error": null, "detail": null, "state": "qa"}
+  ✅ A signed callback -> qa (got qa)
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/qa body={"checks":{"safe_area":true,"audio":true,"image_quality":true,"character_consistency":true,"tail_frame":true}}
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "review", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1", "blocked_reasons": []}
+  ✅ A review (got review)
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/approve body={}
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "approved", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1", "blocked_reasons": []}
+  ✅ A approved (got approved)
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/deliver 
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1", "blocked_reasons": []}
+  ✅ A delivered (got delivered)
+  ✅ A mock:true (got true)
+  ✅ A paid:false (got false)
+  ✅ A published:false (got false)
+→ GET /api/jobs/cpa3-A-20261117-d671c3620f 
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1", "blocked_reasons": []}
+  ✅ A read-back delivered (got delivered)
+  events: preflight -> ready -> queued -> running -> qa -> review -> approved -> delivered
+  costs: [{'kind': 'estimate', 'credits': 4, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:28.156Z'}, {'kind': 'reserve', 'credits': 4, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:28.387Z'}, {'kind': 'commit', 'credits': 4, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:29.605Z'}]
+## 3.B line B full mock flow
+→ POST /api/jobs body={"line":"B","mode":"mock","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","images":3,"prompt":"verify-20261117101427 line B 全母喵布袋戲偶"}
+← HTTP 201 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "draft", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": [], "deduplicated": false}
+  ✅ B create 201 (got 201)
+  jobId=cpa3-B-20261117-ca2beed056
+→ POST /api/jobs/cpa3-B-20261117-ca2beed056/preflight 
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "ready", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ B preflight ready (got ready)
+→ POST /api/jobs/cpa3-B-20261117-ca2beed056/enqueue 
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "queued", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ B queued (got queued)
+→ POST /api/jobs/cpa3-B-20261117-ca2beed056/run 
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "running", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-ca2beed056-a1", "blocked_reasons": []}
+  ✅ B running (got running)
+→ POST /api/callbacks/runninghub-h3 (signed) body={"event_id":"verify-20261117101427-B-ok","job_id":"cpa3-B-20261117-ca2beed056","provider_task_id":"mock-pixverse-cpa3-B-20261117-ca2beed056-a1","status":"succeeded"}
+← HTTP 200 {"duplicate": false, "error": null, "detail": null, "state": "qa"}
+  ✅ B signed callback -> qa (got qa)
+→ POST /api/jobs/cpa3-B-20261117-ca2beed056/qa body={"checks":{"safe_area":true,"image_quality":true,"character_consistency":true}}
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "review", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-ca2beed056-a1", "blocked_reasons": []}
+  ✅ B review (got review)
+→ POST /api/jobs/cpa3-B-20261117-ca2beed056/approve body={}
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "approved", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-ca2beed056-a1", "blocked_reasons": []}
+  ✅ B approved (got approved)
+→ POST /api/jobs/cpa3-B-20261117-ca2beed056/deliver 
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-ca2beed056-a1", "blocked_reasons": []}
+  ✅ B delivered (got delivered)
+  ✅ B mock:true (got true)
+  ✅ B paid:false (got false)
+  ✅ B published:false (got false)
+→ GET /api/jobs/cpa3-B-20261117-ca2beed056 
+← HTTP 200 {"jobId": "cpa3-B-20261117-ca2beed056", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-ca2beed056-a1", "blocked_reasons": []}
+  ✅ B read-back delivered (got delivered)
+  events: preflight -> ready -> queued -> running -> qa -> review -> approved -> delivered
+  costs: [{'kind': 'estimate', 'credits': 3, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:30.337Z'}, {'kind': 'reserve', 'credits': 3, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:30.584Z'}, {'kind': 'commit', 'credits': 3, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:31.731Z'}]
+## 3.C line C full mock flow
+→ POST /api/jobs body={"line":"C","mode":"mock","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","segments":[15,15],"audio_ref":"mock://audio/theme.wav","prompt":"verify-20261117101427 line C 全母喵布袋戲偶"}
+← HTTP 201 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "draft", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": [], "deduplicated": false}
+  ✅ C create 201 (got 201)
+  jobId=cpa3-C-20261117-aac7d9feb4
+→ POST /api/jobs/cpa3-C-20261117-aac7d9feb4/preflight 
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "ready", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ C preflight ready (got ready)
+→ POST /api/jobs/cpa3-C-20261117-aac7d9feb4/enqueue 
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "queued", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ C queued (got queued)
+→ POST /api/jobs/cpa3-C-20261117-aac7d9feb4/run 
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "running", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-C-20261117-aac7d9feb4-a1", "blocked_reasons": []}
+  ✅ C running (got running)
+→ POST /api/callbacks/runninghub-h3 (signed) body={"event_id":"verify-20261117101427-C-ok","job_id":"cpa3-C-20261117-aac7d9feb4","provider_task_id":"mock-runninghub-h3-cpa3-C-20261117-aac7d9feb4-a1","status":"succeeded"}
+← HTTP 200 {"duplicate": false, "error": null, "detail": null, "state": "qa"}
+  ✅ C signed callback -> qa (got qa)
+→ POST /api/jobs/cpa3-C-20261117-aac7d9feb4/qa body={"checks":{"safe_area":true,"audio":true,"image_quality":true,"character_consistency":true,"tail_frame":true}}
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "review", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-C-20261117-aac7d9feb4-a1", "blocked_reasons": []}
+  ✅ C review (got review)
+→ POST /api/jobs/cpa3-C-20261117-aac7d9feb4/approve body={}
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "approved", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-C-20261117-aac7d9feb4-a1", "blocked_reasons": []}
+  ✅ C approved (got approved)
+→ POST /api/jobs/cpa3-C-20261117-aac7d9feb4/deliver 
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-C-20261117-aac7d9feb4-a1", "blocked_reasons": []}
+  ✅ C delivered (got delivered)
+  ✅ C mock:true (got true)
+  ✅ C paid:false (got false)
+  ✅ C published:false (got false)
+→ GET /api/jobs/cpa3-C-20261117-aac7d9feb4 
+← HTTP 200 {"jobId": "cpa3-C-20261117-aac7d9feb4", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-C-20261117-aac7d9feb4-a1", "blocked_reasons": []}
+  ✅ C read-back delivered (got delivered)
+  events: preflight -> ready -> queued -> running -> qa -> review -> approved -> delivered
+  costs: [{'kind': 'estimate', 'credits': 8, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:32.597Z'}, {'kind': 'reserve', 'credits': 8, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:32.818Z'}, {'kind': 'commit', 'credits': 8, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:33.920Z'}]
+## 3.D line D full mock flow
+→ POST /api/jobs body={"line":"D","mode":"mock","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","segments":[15,15,5],"prompt":"verify-20261117101427 line D 全母喵布袋戲偶"}
+← HTTP 201 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "draft", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": [], "deduplicated": false}
+  ✅ D create 201 (got 201)
+  jobId=cpa3-D-20261117-c15f2bbe3d
+→ POST /api/jobs/cpa3-D-20261117-c15f2bbe3d/preflight 
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "ready", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ D preflight ready (got ready)
+→ POST /api/jobs/cpa3-D-20261117-c15f2bbe3d/enqueue 
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "queued", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+  ✅ D queued (got queued)
+→ POST /api/jobs/cpa3-D-20261117-c15f2bbe3d/run 
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "running", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-D-20261117-c15f2bbe3d-a1", "blocked_reasons": []}
+  ✅ D running (got running)
+→ POST /api/callbacks/runninghub-h3 (signed) body={"event_id":"verify-20261117101427-D-ok","job_id":"cpa3-D-20261117-c15f2bbe3d","provider_task_id":"mock-runninghub-h3-cpa3-D-20261117-c15f2bbe3d-a1","status":"succeeded"}
+← HTTP 200 {"duplicate": false, "error": null, "detail": null, "state": "qa"}
+  ✅ D signed callback -> qa (got qa)
+→ POST /api/jobs/cpa3-D-20261117-c15f2bbe3d/qa body={"checks":{"safe_area":true,"audio":true,"image_quality":true,"character_consistency":true,"tail_frame":true}}
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "review", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-D-20261117-c15f2bbe3d-a1", "blocked_reasons": []}
+  ✅ D review (got review)
+→ POST /api/jobs/cpa3-D-20261117-c15f2bbe3d/approve body={}
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "approved", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-D-20261117-c15f2bbe3d-a1", "blocked_reasons": []}
+  ✅ D approved (got approved)
+→ POST /api/jobs/cpa3-D-20261117-c15f2bbe3d/deliver 
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-D-20261117-c15f2bbe3d-a1", "blocked_reasons": []}
+  ✅ D delivered (got delivered)
+  ✅ D mock:true (got true)
+  ✅ D paid:false (got false)
+  ✅ D published:false (got false)
+→ GET /api/jobs/cpa3-D-20261117-c15f2bbe3d 
+← HTTP 200 {"jobId": "cpa3-D-20261117-c15f2bbe3d", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-D-20261117-c15f2bbe3d-a1", "blocked_reasons": []}
+  ✅ D read-back delivered (got delivered)
+  events: preflight -> ready -> queued -> running -> qa -> review -> approved -> delivered
+  costs: [{'kind': 'estimate', 'credits': 7, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:34.667Z'}, {'kind': 'reserve', 'credits': 7, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:34.915Z'}, {'kind': 'commit', 'credits': 7, 'scope': 'staging-mock', 'paid': 0, 'created_at': '2026-11-17T02:14:35.959Z'}]
+## 4. idempotency (repeat line A request)
+→ POST /api/jobs body={"line":"A","mode":"mock","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","segments":[5,15],"prompt":"verify-20261117101427 line A 全母喵布袋戲偶"}
+← HTTP 200 {"jobId": "cpa3-A-20261117-d671c3620f", "state": "delivered", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-runninghub-h3-cpa3-A-20261117-d671c3620f-a1", "blocked_reasons": [], "deduplicated": true}
+  ✅ repeat -> 200 (got 200)
+  ✅ repeat deduplicated (got true)
+  ✅ repeat same jobId (got cpa3-A-20261117-d671c3620f)
+## 5. CANON rejection
+→ POST /api/jobs body={"line":"A","protagonist":"fixture-fulan","segments":[5],"prompt":"verify-20261117101427 no master","auto_preflight":true}
+← HTTP 201 {"jobId": "cpa3-A-20261117-485fe61a33", "state": "blocked", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": ["canon_missing_master_url"], "deduplicated": false}
+  ✅ missing master URL -> blocked (got blocked)
+→ POST /api/jobs body={"line":"A","protagonist":"random-tomcat","master_url":"https://example.com/x.png","segments":[5],"prompt":"verify-20261117101427 unregistered","auto_preflight":true}
+← HTTP 201 {"jobId": "cpa3-A-20261117-509f585340", "state": "blocked", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": ["canon_unregistered_character:random-tomcat"], "deduplicated": false}
+  ✅ unregistered protagonist -> blocked (got blocked)
+→ POST /api/jobs body={"line":"A","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","segments":[10],"prompt":"verify-20261117101427 10s","auto_preflight":true}
+← HTTP 201 {"jobId": "cpa3-A-20261117-61347aa2da", "state": "blocked", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": ["invalid_duration_10s_allowed_5_or_15"], "deduplicated": false}
+  ✅ 10s segment -> blocked (got blocked)
+→ POST /api/jobs/cpa3-A-20261117-485fe61a33/enqueue 
+← HTTP 409 {"mock": true, "paid": false, "published": false, "error": "invalid_transition", "detail": {"from": "blocked", "to": "queued"}}
+  ✅ blocked job enqueue -> 409 (got 409)
+→ POST /api/jobs body={"line":"A","mode":"live","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","segments":[5],"prompt":"verify-20261117101427 live","auto_preflight":true}
+← HTTP 201 {"jobId": "cpa3-A-20261117-5e6f47cdb5", "state": "blocked", "mock": false, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": ["live_blocked:live_providers_disabled_in_staging"], "deduplicated": false}
+  ✅ live mode -> blocked (paid block) (got blocked)
+## 6. forged / duplicate callbacks
+→ POST /api/jobs body={"line":"B","protagonist":"fixture-fulan","master_url":"https://canon-fixtures.invalid/master/fixture-fulan-v1.png","images":1,"prompt":"verify-20261117101427 cb","auto_preflight":true}
+← HTTP 201 {"jobId": "cpa3-B-20261117-55eca8b8af", "state": "ready", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": [], "deduplicated": false}
+→ POST /api/jobs/cpa3-B-20261117-55eca8b8af/enqueue 
+← HTTP 200 {"jobId": "cpa3-B-20261117-55eca8b8af", "state": "queued", "mock": true, "paid": false, "published": false, "attempts": 0, "provider_task_id": null, "blocked_reasons": []}
+→ POST /api/jobs/cpa3-B-20261117-55eca8b8af/run 
+← HTTP 200 {"jobId": "cpa3-B-20261117-55eca8b8af", "state": "running", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-55eca8b8af-a1", "blocked_reasons": []}
+→ POST /api/callbacks/runninghub-h3 (signed with WRONG secret) body={"event_id":"verify-20261117101427-forged","job_id":"cpa3-B-20261117-55eca8b8af","provider_task_id":"mock-pixverse-cpa3-B-20261117-55eca8b8af-a1","status":"succeeded"}
+← HTTP 401 {"duplicate": null, "error": "callback_signature_rejected", "detail": {"reason": "bad_signature"}, "state": null}
+  ✅ forged signature -> 401 (got 401)
+  ✅ unsigned callback -> 401 (got 401)
+→ GET /api/jobs/cpa3-B-20261117-55eca8b8af 
+← HTTP 200 {"jobId": "cpa3-B-20261117-55eca8b8af", "state": "running", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": "mock-pixverse-cpa3-B-20261117-55eca8b8af-a1", "blocked_reasons": []}
+  ✅ job still running after forged cb (got running)
+→ POST /api/callbacks/runninghub-h3 (signed) body={"event_id":"verify-20261117101427-fail1","job_id":"cpa3-B-20261117-55eca8b8af","provider_task_id":"mock-pixverse-cpa3-B-20261117-55eca8b8af-a1","status":"failed","error":"mock_failure"}
+← HTTP 200 {"duplicate": false, "error": null, "detail": null, "state": "queued"}
+  ✅ provider failure -> retry queued (got queued)
+→ POST /api/callbacks/runninghub-h3 (signed) body={"event_id":"verify-20261117101427-fail1","job_id":"cpa3-B-20261117-55eca8b8af","provider_task_id":"mock-pixverse-cpa3-B-20261117-55eca8b8af-a1","status":"failed","error":"mock_failure"}
+← HTTP 200 {"duplicate": true, "error": null, "detail": null, "state": "queued"}
+  ✅ duplicate event ignored (got true)
+→ POST /api/jobs/cpa3-B-20261117-55eca8b8af/cancel body={"reason":"verify cleanup"}
+← HTTP 200 {"jobId": "cpa3-B-20261117-55eca8b8af", "state": "cancelled", "mock": true, "paid": false, "published": false, "attempts": 1, "provider_task_id": null, "blocked_reasons": []}
+  ✅ cancel -> cancelled (got cancelled)
+## 7. publish blocked
+→ POST /api/jobs/cpa3-A-20261117-d671c3620f/publish body={}
+← HTTP 403 {"mock": true, "paid": false, "published": false, "error": "publish_blocked", "detail": {"reason": "publish gate is separate from generation and closed in this build; owner approval of a named draft required", "published": false}}
+  ✅ publish delivered job -> 403 (got 403)
+  ✅ publish error code (got publish_blocked)
+## 8. budget (mock credits)
+→ GET /api/budget 
+← HTTP 200 {"paid": false}
+{
+  "unit": "mock-credit",
+  "paid": false,
+  "budgets": [
+    {
+      "scope": "staging-mock",
+      "limit_credits": 200,
+      "reserved": 0,
+      "spent": 22,
+      "paid": 0
+    }
+  ]
+}
+# RESULT pass=69 fail=0

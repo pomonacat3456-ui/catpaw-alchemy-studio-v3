@@ -1,0 +1,14 @@
+stages: [test]
+
+test:
+  stage: test
+  image: node:22
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm/]
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm run typecheck
+    - npm test
+# No deploy job on purpose: staging deploys are manual; production needs owner approval.

@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `wrangler dev` (never commit real values)
+ADMIN_KEY=replace-me-local-only
+CALLBACK_HMAC_SECRET=replace-me-local-only

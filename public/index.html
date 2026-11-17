@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>貓掌鍊金術 3.0 · STAGING</title>
+<style>
+  :root { --bg:#14111c; --card:#201a2c; --ink:#f3ecff; --mute:#a99bc4; --acc:#e7b45a; --ok:#5fd39a; --bad:#ff7a7a; --warn:#ffc65c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#09070d; color:var(--ink); font:15px/1.45 system-ui, "Noto Sans TC", sans-serif; display:flex; justify-content:center; }
+  .phone { width:100%; max-width:min(480px, calc(100dvh * 9 / 16)); min-height:100dvh; background:var(--bg); display:flex; flex-direction:column; }
+  header { padding:12px 14px 8px; position:sticky; top:0; background:var(--bg); z-index:2; border-bottom:1px solid #2c2440; }
+  h1 { font-size:18px; margin:0; } h1 small { color:var(--acc); font-size:12px; }
+  .badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .b { font-size:11px; padding:2px 8px; border-radius:99px; background:#2c2440; color:var(--mute); }
+  .b.mock { background:#3b2f10; color:var(--warn); } .b.no { background:#3a1b22; color:#ffb3b3; }
+  nav { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; padding:8px 12px; }
+  nav button { padding:10px 0; }
+  main { flex:1; padding:6px 12px 90px; }
+  .card { background:var(--card); border-radius:14px; padding:12px; margin:10px 0; }
+  label { display:block; font-size:12px; color:var(--mute); margin-top:8px; }
+  input, select, textarea { width:100%; padding:10px; border-radius:10px; border:1px solid #3a3050; background:#120f19; color:var(--ink); font-size:15px; }
+  button { background:#3a2f55; color:var(--ink); border:0; border-radius:10px; padding:10px 12px; font-size:14px; min-height:44px; }
+  button.pri { background:var(--acc); color:#1a1205; font-weight:600; } button:disabled { opacity:.4; }
+  .lines { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .lines button.on { outline:2px solid var(--acc); }
+  .state { font-weight:700; } .state.blocked,.state.failed,.state.cancelled { color:var(--bad); } .state.delivered { color:var(--ok); }
+  .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .acts { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  pre { white-space:pre-wrap; word-break:break-all; font-size:11px; color:var(--mute); max-height:240px; overflow:auto; }
+  .muted { color:var(--mute); font-size:12px; } .err { color:var(--bad); }
+  .preview { aspect-ratio:9/16; width:38%; background:repeating-linear-gradient(45deg,#2a2238,#2a2238 8px,#241d31 8px,#241d31 16px); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--mute); text-align:center; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <header>
+    <h1>貓掌鍊金術 3.0 <small>CatPaw Alchemy Studio v3 · STAGING</small></h1>
+    <div class="badges">
+      <span class="b mock">mock:true</span><span class="b no">paid:false</span><span class="b no">published:false</span>
+      <span class="b">全新重建（非原 ZIP 還原）</span><span class="b" id="hv">…</span>
+    </div>
+  </header>
+  <nav>
+    <button data-tab="new">新任務</button><button data-tab="jobs">任務</button><button data-tab="budget">預算</button><button data-tab="canon">角色</button>
+  </nav>
+  <main>
+    <div class="card" id="keycard">
+      <label>管理金鑰（只存在這個分頁的 sessionStorage）</label>
+      <input id="key" type="password" autocomplete="off" placeholder="x-admin-key">
+      <div class="acts"><button class="pri" id="savekey">登入</button><button id="clearkey">登出</button></div>
+    </div>
+    <section id="tab-new" class="tab">
+      <div class="card">
+        <div class="lines" id="linepick">
+          <button data-line="A">A 短影音</button><button data-line="B">B 寫真圖片</button>
+          <button data-line="C">C 音樂 MV</button><button data-line="D">D 長片漫劇</button>
+        </div>
+        <label>主角（CANON 角色 id）</label><select id="protagonist"></select>
+        <label>核准 Master URL</label><input id="master" placeholder="https://…">
+        <div id="segbox"><label>分段秒數（只允許 5 或 15，逗號分隔）</label><input id="segments" value="5,15"></div>
+        <div id="imgbox" hidden><label>張數（1–8）</label><input id="images" type="number" value="3" min="1" max="8"></div>
+        <div id="audbox" hidden><label>音樂參考（C 線必填）</label><input id="audio" value="mock://audio/theme.wav"></div>
+        <label>提示詞</label><textarea id="prompt" rows="3">全母喵布袋戲偶，9:16，固定兵器與服裝</textarea>
+        <div class="acts"><button class="pri" id="create">建立 Mock 任務並預檢</button></div>
+        <p class="muted">Staging 只跑 Mock adapter；live provider 一律 fail-closed，生成成功也不會觸發發布。</p>
+        <div id="newout"></div>
+      </div>
+    </section>
+    <section id="tab-jobs" class="tab" hidden><div id="joblist"></div></section>
+    <section id="tab-budget" class="tab" hidden><div class="card"><pre id="budget"></pre></div></section>
+    <section id="tab-canon" class="tab" hidden><div class="card"><p class="muted">以下為 staging 測試夾具，不是正式 CANON Sheet v3。</p><pre id="canon"></pre></div></section>
+  </main>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+let line = "A", canon = [];
+const key = () => sessionStorage.getItem("cpa3key") || "";
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: { "x-admin-key": key(), ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(d.error || r.status), { data: d });
+  return d;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function show(tab) { document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + tab)); if (tab === "jobs") loadJobs(); if (tab === "budget") loadBudget(); if (tab === "canon") loadCanon(); }
+document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => show(b.dataset.tab)));
+function pickLine(l) {
+  line = l; document.querySelectorAll("#linepick button").forEach((b) => b.classList.toggle("on", b.dataset.line === l));
+  $("#segbox").hidden = l === "B"; $("#imgbox").hidden = l !== "B"; $("#audbox").hidden = l !== "C";
+  $("#segments").value = l === "D" ? "15,15,5" : l === "C" ? "15,15" : "5,15";
+}
+document.querySelectorAll("#linepick button").forEach((b) => (b.onclick = () => pickLine(b.dataset.line)));
+$("#savekey").onclick = () => { sessionStorage.setItem("cpa3key", $("#key").value); $("#key").value = ""; init(); };
+$("#clearkey").onclick = () => { sessionStorage.removeItem("cpa3key"); location.reload(); };
+$("#protagonist").onchange = () => { const c = canon.find((x) => x.id === $("#protagonist").value); if (c) $("#master").value = c.master_url; };
+$("#create").onclick = async () => {
+  const body = { line, mode: "mock", protagonist: $("#protagonist").value, master_url: $("#master").value || undefined, prompt: $("#prompt").value, auto_preflight: true };
+  if (line === "B") body.images = Number($("#images").value); else body.segments = $("#segments").value.split(",").map((x) => Number(x.trim())).filter((x) => x);
+  if (line === "C") body.audio_ref = $("#audio").value;
+  try { const d = await api("POST", "/api/jobs", body); $("#newout").innerHTML = jobCard(d.job) + (d.deduplicated ? '<p class="muted">同內容任務已存在（idempotency），未重複建立。</p>' : ""); bind($("#newout")); }
+  catch (e) { $("#newout").innerHTML = `<p class="err">${esc(e.message)}</p><pre>${esc(JSON.stringify(e.data, null, 1))}</pre>`; }
+};
+const ACT = { preflight: "預檢", enqueue: "預留額度並排入", run: "送 Mock 生成", "mock/callback": "模擬簽章回呼", qa: "QA 全通過", approve: "核准", deliver: "交付", cancel: "取消", publish: "發布（會被擋）" };
+function actionsFor(j) {
+  const s = j.state, a = [];
+  if (s === "draft" || s === "blocked") a.push("preflight");
+  if (s === "ready") a.push("enqueue"); if (s === "queued") a.push("run"); if (s === "running") a.push("mock/callback");
+  if (s === "qa") a.push("qa"); if (s === "review") a.push("approve"); if (s === "approved") a.push("deliver");
+  if (!["delivered", "failed", "cancelled"].includes(s)) a.push("cancel");
+  a.push("publish"); return a;
+}
+function jobCard(j) {
+  return `<div class="card" data-id="${esc(j.jobId)}"><div class="row"><div><div class="muted">${esc(j.jobId)}</div>
+    <div>線 ${esc(j.line)} · <span class="state ${esc(j.state)}">${esc(j.state)}</span> · 第 ${j.attempts}/${j.max_attempts} 次</div>
+    <div class="muted">mock:${j.mock} · paid:${j.paid} · published:${j.published} · 預估 ${j.credits.estimated} mock credits</div></div>
+    <div class="preview">9:16<br>${j.mock ? "Mock 預覽" : ""}</div></div>
+    ${j.blocked_reasons?.length ? `<p class="err">${j.blocked_reasons.map(esc).join("<br>")}</p>` : ""}
+    ${j.last_error ? `<p class="muted">最近錯誤：${esc(j.last_error)}</p>` : ""}
+    <div class="acts">${actionsFor(j).map((a) => `<button data-act="${a}">${ACT[a]}</button>`).join("")}</div><div class="msg"></div></div>`;
+}
+function bind(root) {
+  root.querySelectorAll("[data-act]").forEach((b) => (b.onclick = async () => {
+    const card = b.closest("[data-id]"), id = card.dataset.id, act = b.dataset.act;
+    const body = act === "qa" ? { checks: { safe_area: true, audio: true, image_quality: true, character_consistency: true, tail_frame: true } } : {};
+    try { const d = await api("POST", `/api/jobs/${id}/${act}`, body); const j = d.job; const tmp = document.createElement("div"); tmp.innerHTML = jobCard(j); card.replaceWith(tmp.firstElementChild); bind(document); }
+    catch (e) { card.querySelector(".msg").innerHTML = `<p class="err">${esc(e.message)}${e.data?.detail?.reason ? "：" + esc(e.data.detail.reason) : ""}</p>`; }
+  }));
+}
+async function loadJobs() { try { const d = await api("GET", "/api/jobs"); $("#joblist").innerHTML = d.jobs.map(jobCard).join("") || '<p class="muted">尚無任務</p>'; bind($("#joblist")); } catch (e) { $("#joblist").innerHTML = `<p class="err">${esc(e.message)}</p>`; } }
+async function loadBudget() { try { $("#budget").textContent = JSON.stringify(await api("GET", "/api/budget"), null, 1); } catch (e) { $("#budget").textContent = e.message; } }
+async function loadCanon() { try { $("#canon").textContent = JSON.stringify((await api("GET", "/api/canon")).characters, null, 1); } catch (e) { $("#canon").textContent = e.message; } }
+async function init() {
+  fetch("/health").then((r) => r.json()).then((h) => ($("#hv").textContent = `${h.environment} · ${h.version} · D1 ${h.d1}`)).catch(() => ($("#hv").textContent = "health 失敗"));
+  $("#keycard").hidden = !!key();
+  if (!key()) return;
+  try { canon = (await api("GET", "/api/canon")).characters; $("#protagonist").innerHTML = canon.map((c) => `<option value="${esc(c.id)}">${esc(c.display_name)}</option>`).join(""); $("#protagonist").onchange(); }
+  catch (e) { $("#keycard").hidden = false; }
+}
+pickLine("A"); init();
+</script>
+</body>
+</html>

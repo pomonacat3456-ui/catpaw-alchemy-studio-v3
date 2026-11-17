@@ -1,0 +1,30 @@
+# STAGING ONLY — isolated from threads-scheduler and every other existing Worker / D1.
+name = "catpaw-alchemy-v3-staging"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+preview_urls = false
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/health"]
+
+[vars]
+ENVIRONMENT = "staging"
+LIVE_PROVIDERS_ENABLED = "false"
+PUBLISH_GATE_ENABLED = "false"
+BUDGET_SCOPE = "staging-mock"
+MAX_ATTEMPTS = "3"
+RUNNING_TIMEOUT_SEC = "900"
+MAX_JOB_CREDITS = "30"
+# Secrets (set with `wrangler secret put`, never committed): ADMIN_KEY, CALLBACK_HMAC_SECRET
+
+[[d1_databases]]
+binding = "DB"
+database_name = "catpaw-alchemy-v3-staging"
+database_id = "de174b2d-7cce-409b-9945-1323adeabf86"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["*/30 * * * *"]  # timeout sweep (free tier)
