@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { createJob, enqueue, failOrRetry, getJob, preflight, run, transition } from "../src/jobs";
 import { livePoll } from "../src/live";
-import { syncCanon } from "../src/canon";
+import { createLiveOverride, syncCanon } from "../src/canon";
 import { parseSpec } from "../src/lib/validate";
 import { providerDeps } from "../src/providers/runninghub";
 import { DB, signedCallback, uniq } from "./helpers";
@@ -68,6 +68,7 @@ beforeEach(async () => {
   await DB.prepare("UPDATE budgets SET reserved = 0, spent = 0 WHERE scope IN ('production-live','production-mock')").run();
   await DB.prepare("UPDATE budgets SET limit_credits = 400 WHERE scope = 'production-live'").run();
   await seedCanon(env);
+  await DB.prepare("UPDATE canon_live_overrides SET expires_at = '2000-01-01T00:00:00Z'").run(); // no leftovers between tests
 });
 afterEach(() => { providerDeps.fetch = realFetch; });
 
@@ -206,5 +207,63 @@ describe("live RunningHub adapter (mocked fetch)", () => {
     const r = await signedCallback({ event_id: `evt-${uniq()}`, job_id: job.id, provider_task_id: job.provider_task_id, status: "succeeded" });
     expect(r.status).toBe(409);
     expect(r.data.error).toBe("live_jobs_use_provider_polling");
+  });
+
+  it("single-job owner override: releases ONE closed-gate character for ONE job, consumed at the paid call", async () => {
+    const e = await prodEnv();
+    await DB.prepare("UPDATE budgets SET limit_credits = 2000 WHERE scope = 'production-live'").run();
+    // MZ_T02 is blocked by the sheet (暫停製片, private Drive)
+    const blocked = await liveQueued(e, { protagonist: "MZ_T02", master_url: MASTER });
+    expect(blocked.state).toBe("blocked");
+    await expect(createLiveOverride(e, { character_id: "MZ_T02", master_url: MASTER, approver: "x" })).rejects.toThrow("approver_required");
+    const { override } = await createLiveOverride(e, { character_id: "MZ_T02", master_url: MASTER, approver: "owner 2026-11-17 11:50", reason: "test" });
+    await expect(createLiveOverride(e, { character_id: "MZ_T02", master_url: MASTER, approver: "owner again ok" })).rejects.toThrow("an_active_override_already_exists");
+    const j1 = await liveQueued(e, { protagonist: "MZ_T02", master_url: MASTER });
+    expect(j1.state).toBe("queued");
+    // a second job cannot use the override bound to j1
+    const j2 = await liveQueued(e, { protagonist: "MZ_T02", master_url: MASTER });
+    expect(j2.state).toBe("blocked");
+    // other characters remain blocked
+    const other = await liveQueued(e, { protagonist: "MZ_T03", master_url: MASTER });
+    expect(other.state).toBe("blocked");
+    const ran = await run(e, j1);
+    expect(ran.state).toBe("running");
+    expect(JSON.parse(ran.provider_meta_json!).canon_override.approver).toBe("owner 2026-11-17 11:50");
+    const ov = await DB.prepare("SELECT used_count, job_id, consumed_at FROM canon_live_overrides WHERE id = ?").bind(override.id).first<any>();
+    expect(ov.used_count).toBe(1);
+    expect(ov.job_id).toBe(j1.id);
+    expect(ov.consumed_at).toBeTruthy();
+  });
+
+  it("override is NOT consumed when a pre-charge step fails (balance), so one retry stays possible", async () => {
+    const e = await prodEnv();
+    const { override } = await createLiveOverride(e, { character_id: "MZ_T02", master_url: MASTER, approver: "owner 2026-11-17 11:50" });
+    const j = await liveQueued(e, { protagonist: "MZ_T02", master_url: MASTER });
+    balance = "10";
+    await expect(run(e, j)).rejects.toThrow("provider_balance_insufficient");
+    const ov = await DB.prepare("SELECT used_count FROM canon_live_overrides WHERE id = ?").bind(override.id).first<any>();
+    expect(ov.used_count).toBe(0);
+  });
+
+  it("override cannot target a character without a sheet-approved Master", async () => {
+    const e = await prodEnv();
+    await syncCanon(e, { sheet_id: "TESTSHEET_1234567890abcdef", rows: [{ character_id: "MZ_T09", name: "無圖喵", gender: "母喵", canon_status: "MASTER_FOUND",
+      production_gate: "暫停製片", master_url: "", asset_approved: false, master_readable: "", sheet_tab: "t", sheet_row: 9 }] });
+    await expect(createLiveOverride(e, { character_id: "MZ_T09", master_url: MASTER, approver: "owner 2026-11-17 11:50" })).rejects.toThrow("character_not_eligible_for_override");
+    await seedCanon(env);
+  });
+
+  it("own public CANON Master URL is read from R2 (a Worker cannot fetch its own workers.dev host)", async () => {
+    const ORIGIN = "https://catpaw-own.example.workers.dev";
+    const url = `${ORIGIN}/public/canon/MZ_T02-master.png`;
+    await (env as any).ASSETS_BUCKET.put("public/canon/MZ_T02-master.png", new Uint8Array(4096).fill(7), { httpMetadata: { contentType: "image/png" } });
+    const e = await prodEnv({ PUBLIC_ORIGIN: ORIGIN });
+    await DB.prepare("UPDATE budgets SET limit_credits = 2000 WHERE scope = 'production-live'").run();
+    await createLiveOverride(e, { character_id: "MZ_T02", master_url: url, approver: "owner 2026-11-17 11:50" });
+    const j = await liveQueued(e, { protagonist: "MZ_T02", master_url: url });
+    expect(j.state).toBe("queued");
+    const ran = await run(e, j);
+    expect(ran.state).toBe("running");
+    expect(calls.some((c: any) => String(c.url ?? c).startsWith(ORIGIN))).toBe(false);
   });
 });

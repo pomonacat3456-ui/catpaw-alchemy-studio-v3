@@ -75,3 +75,32 @@ export async function syncCanon(env: Env, body: any) {
   await env.DB.batch(stmts);
   return { sheet_id: sheetId, synced_at: syncedAt, stats, rows: detail };
 }
+
+/**
+ * Owner single-job live override. Does NOT touch the sheet. Only for a character that is already
+ * CANON_LOCKED with a sheet-approved Master (mock_eligible), female, from the real sheet.
+ */
+export async function createLiveOverride(env: Env, body: any) {
+  const characterId = String(body?.character_id ?? "");
+  const masterUrl = String(body?.master_url ?? "");
+  const approver = String(body?.approver ?? "").trim();
+  const ttlH = Math.min(24, Math.max(1, Number(body?.ttl_hours ?? 6)));
+  if (approver.length < 8) throw new HttpError(400, "approver_required");
+  if (!/^https:\/\//.test(masterUrl)) throw new HttpError(400, "master_url_must_be_https");
+  const c = await env.DB.prepare("SELECT * FROM canon_characters WHERE id = ?").bind(characterId).first<any>();
+  if (!c || c.source !== "canon-sheet-v3" || c.sex !== "female" || c.mock_eligible !== 1)
+    throw new HttpError(409, "character_not_eligible_for_override", { character_id: characterId });
+  const active = await env.DB.prepare("SELECT COUNT(*) n FROM canon_live_overrides WHERE used_count < max_uses AND expires_at > ?")
+    .bind(new Date().toISOString()).first<any>();
+  if (active.n > 0) throw new HttpError(409, "an_active_override_already_exists");
+  const now = new Date();
+  const row = { id: `ovr-${crypto.randomUUID()}`, character_id: characterId, master_url: masterUrl, approver: approver.slice(0, 200),
+    reason: String(body?.reason ?? "").slice(0, 300), created_at: now.toISOString(), expires_at: new Date(now.getTime() + ttlH * 3600_000).toISOString() };
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO canon_live_overrides (id, character_id, master_url, approver, reason, created_at, expires_at) VALUES (?,?,?,?,?,?,?)")
+      .bind(row.id, row.character_id, row.master_url, row.approver, row.reason, row.created_at, row.expires_at),
+    env.DB.prepare("INSERT INTO events (job_id, type, detail_json, created_at) VALUES (NULL, 'canon_live_override_created', ?, ?)")
+      .bind(JSON.stringify(row), row.created_at),
+  ]);
+  return { override: { ...row, max_uses: 1, used_count: 0 } };
+}

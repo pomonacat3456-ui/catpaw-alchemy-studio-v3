@@ -107,7 +107,12 @@ export function checkCanon(spec: JobSpec, canonIn: Map<string, CanonRow>, opts: 
   else if (!/^https:\/\//.test(spec.master_url)) r.push("canon_master_url_must_be_https");
   else if (p && p.master_url !== spec.master_url) r.push("canon_master_url_not_the_approved_master");
   const lower = spec.prompt.toLowerCase();
-  for (const t of FORBIDDEN_PROMPT_TERMS) if (lower.includes(t.toLowerCase())) r.push(`canon_forbidden_term:${t}`);
+  for (const t of FORBIDDEN_PROMPT_TERMS) {
+    const tl = t.toLowerCase();
+    // ASCII terms match whole words only ("male" must not match "female"); CJK terms match as substrings.
+    const hit = /^[a-z ]+$/.test(tl) ? new RegExp(`\\b${tl.replace(/ /g, "\\s+")}\\b`).test(lower) : lower.includes(tl);
+    if (hit) r.push(`canon_forbidden_term:${t}`);
+  }
   return r;
 }
 

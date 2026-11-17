@@ -84,6 +84,8 @@ describe("CANON gate (unit)", () => {
     expect(checkCanon(parseSpec({ ...base, master_url: "https://x.invalid/other.png" }), canon as any)).toContain("canon_master_url_not_the_approved_master");
     expect(checkCanon(parseSpec({ ...base, master_url: "http://x.invalid/f.png" }), canon as any)).toContain("canon_master_url_must_be_https");
     expect(checkCanon(parseSpec({ ...base, prompt: "貓俠舉起人手" }), canon as any)).toContain("canon_forbidden_term:人手");
+    expect(checkCanon(parseSpec({ ...base, prompt: "a male cat" }), canon as any)).toContain("canon_forbidden_term:male");
+    expect(checkCanon(parseSpec({ ...base, prompt: "a female cat queen, 人類手掌 replaced by paws" }), canon as any)).toEqual([]);
   });
 });
 

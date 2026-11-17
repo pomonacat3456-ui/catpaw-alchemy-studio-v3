@@ -15,7 +15,7 @@ describe("health & auth", () => {
     const d: any = await r.json();
     expect(r.status).toBe(200);
     expect(d).toMatchObject({ ok: true, d1: "ok", mock: true, paid: false, published: false, live_providers: false, rebuild: "fresh-rebuild-not-zip-restore" });
-    expect(d.schema_version).toBe("0003_canon_sync_and_live.sql");
+    expect(d.schema_version).toBe("0004_canon_live_override.sql");
   });
   it("API requires the admin key", async () => {
     expect((await api("GET", "/api/jobs", undefined, { "x-admin-key": "wrong" })).status).toBe(401);
@@ -287,5 +287,20 @@ describe("state transition guards", () => {
   it("rejects malformed jobs with 400", async () => {
     expect((await api("POST", "/api/jobs", { line: "Z" })).status).toBe(400);
     expect((await api("POST", "/api/jobs", { line: "A" })).status).toBe(400);
+  });
+});
+
+describe("public canon route", () => {
+  it("serves only public/canon/* from R2 without auth; nothing else", async () => {
+    const b = (env as any).ASSETS_BUCKET as R2Bucket;
+    await b.put("public/canon/MZ_TEST-master.png", new Uint8Array([137, 80, 78, 71]), { httpMetadata: { contentType: "image/png" } });
+    await b.put("live/secret-job/out.mp4", new Uint8Array([1, 2, 3]));
+    const ok = await (exports as any).default.fetch("https://staging.test/public/canon/MZ_TEST-master.png");
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("image/png");
+    expect((await (exports as any).default.fetch("https://staging.test/public/canon/missing.png")).status).toBe(404);
+    expect((await (exports as any).default.fetch("https://staging.test/public/canon/../live/secret-job/out.mp4")).status).toBe(404);
+    expect((await (exports as any).default.fetch("https://staging.test/public/live/secret-job/out.mp4")).status).toBe(404);
+    expect((await (exports as any).default.fetch("https://staging.test/api/assets/r2/live/secret-job/out.mp4")).status).toBe(401);
   });
 });

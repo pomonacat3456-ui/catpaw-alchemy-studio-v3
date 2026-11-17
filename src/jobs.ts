@@ -145,14 +145,35 @@ export async function loadCanon(env: Env, ids: string[]): Promise<Map<string, Ca
   return m;
 }
 
+/** Find an active override for (character, master_url) and bind it to this job (only if unbound or already ours). */
+export async function bindLiveOverride(env: Env, jobId: string, characterId: string, masterUrl?: string) {
+  if (!masterUrl) return null;
+  const now = nowIso();
+  await env.DB.prepare(
+    `UPDATE canon_live_overrides SET job_id = ? WHERE id = (
+       SELECT id FROM canon_live_overrides WHERE character_id = ? AND master_url = ? AND used_count < max_uses AND expires_at > ?
+         AND (job_id IS NULL OR job_id = ?) ORDER BY created_at LIMIT 1) AND (job_id IS NULL OR job_id = ?)`,
+  ).bind(jobId, characterId, masterUrl, now, jobId, jobId).run();
+  return env.DB.prepare(
+    "SELECT * FROM canon_live_overrides WHERE job_id = ? AND character_id = ? AND master_url = ? AND used_count < max_uses AND expires_at > ?",
+  ).bind(jobId, characterId, masterUrl, now).first<{ id: string; master_url: string; approver: string }>();
+}
+
 /** draft|blocked -> preflight -> ready|blocked. CANON gate, format/duration, live gate, per-job cost cap. */
 export async function preflight(env: Env, job: JobRow): Promise<JobRow> {
   const spec = JSON.parse(job.spec_json) as JobSpec;
   const mid = await transition(env, job, "preflight");
+  const canon = await loadCanon(env, spec.cast);
+  if (spec.mode === "live") {
+    // Single-job owner override (see migrations/0004): binds to this job, releases ONLY the protagonist, ONLY for live.
+    const ov = await bindLiveOverride(env, job.id, spec.protagonist, spec.master_url);
+    const c = canon.get(spec.protagonist);
+    if (ov && c) canon.set(spec.protagonist, { ...c, approved: 1, master_url: ov.master_url });
+  }
   const reasons = [
     ...checkFormat(spec),
     ...checkLiveFormat(spec),
-    ...checkCanon(spec, await loadCanon(env, spec.cast), { mode: spec.mode, environment: env.ENVIRONMENT }),
+    ...checkCanon(spec, canon, { mode: spec.mode, environment: env.ENVIRONMENT }),
   ];
   if (spec.mode === "live") {
     const g = liveAllowed(env);

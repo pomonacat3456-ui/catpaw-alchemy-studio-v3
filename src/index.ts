@@ -2,7 +2,7 @@ import { HttpError, type Env, type JobRow } from "./types";
 import { hmacSha256Hex, timingSafeEqualStr, verifyCallbackSignature } from "./lib/crypto";
 import { LINES, liveAllowed, parseSpec } from "./lib/validate";
 import { livePoll, providerBalance } from "./live";
-import { syncCanon } from "./canon";
+import { createLiveOverride, syncCanon } from "./canon";
 import { TRANSITIONS } from "./lib/states";
 import {
   cancel, createJob, deliver, enqueue, failOrRetry, getJob, handleCallback, logEvent, preflight, qa, run, sweepTimeouts,
@@ -78,6 +78,17 @@ async function route(req: Request, env: Env): Promise<Response> {
 
   if (p === "/health" && m === "GET") return health(env);
 
+  // Public, unauthenticated read of owner-approved PUBLIC Master copies only (R2 prefix public/canon/).
+  const pub = p.match(/^\/public\/canon\/([A-Za-z0-9_-]{1,60}\.(png|jpg|jpeg|webp))$/);
+  if (pub && (m === "GET" || m === "HEAD")) {
+    if (!env.ASSETS_BUCKET) throw new HttpError(404, "not_found");
+    const obj = await env.ASSETS_BUCKET.get(`public/canon/${pub[1]}`);
+    if (!obj) throw new HttpError(404, "not_found");
+    return new Response(m === "HEAD" ? null : obj.body, {
+      headers: { "content-type": obj.httpMetadata?.contentType ?? "image/png", "cache-control": "public, max-age=300", etag: obj.httpEtag },
+    });
+  }
+
   // Provider callbacks: authenticated by HMAC signature, not by admin key.
   const cb = p.match(/^\/api\/callbacks\/([a-z0-9-]+)$/);
   if (cb && m === "POST") {
@@ -105,6 +116,9 @@ async function route(req: Request, env: Env): Promise<Response> {
     return json({ note: "source=canon-sheet-v3 rows are synced read-only from the CANON Sheet; staging-fixture rows are test data", characters: visible });
   }
   if (p === "/api/admin/canon/sync" && m === "POST") return json(await syncCanon(env, await readJson(req)));
+  if (p === "/api/admin/canon/live-override" && m === "POST") return json(await createLiveOverride(env, await readJson(req)), 201);
+  if (p === "/api/admin/canon/live-override" && m === "GET")
+    return json({ overrides: (await env.DB.prepare("SELECT * FROM canon_live_overrides ORDER BY created_at DESC LIMIT 20").all()).results });
   if (p === "/api/provider/balance" && m === "GET") return json({ provider: "runninghub", read_only: true, balance: await providerBalance(env) });
   if (p.startsWith("/api/assets/r2/") && m === "GET") {
     if (!env.ASSETS_BUCKET) throw new HttpError(404, "r2_not_bound");

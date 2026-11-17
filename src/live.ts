@@ -36,7 +36,11 @@ export async function liveSubmit(env: Env, job: JobRow) {
   if (job.provider !== "runninghub-h3" || job.line !== "A") throw new HttpError(403, "live_only_runninghub_h3_line_A");
   const spec = JSON.parse(job.spec_json) as JobSpec;
   const canon = await env.DB.prepare("SELECT * FROM canon_characters WHERE id = ?").bind(job.character_id).first<any>();
-  if (!canon || canon.approved !== 1 || canon.sex !== "female" || canon.source === "staging-fixture" || canon.master_url !== job.master_url)
+  const override = await env.DB.prepare(
+    "SELECT * FROM canon_live_overrides WHERE job_id = ? AND character_id = ? AND master_url = ? AND used_count < max_uses AND expires_at > ?",
+  ).bind(job.id, job.character_id, job.master_url ?? "", new Date().toISOString()).first<any>();
+  const sheetApproved = canon?.approved === 1 && canon.master_url === job.master_url;
+  if (!canon || canon.sex !== "female" || canon.source === "staging-fixture" || (!sheetApproved && !override))
     throw new HttpError(403, "canon_not_live_approved", { character: job.character_id });
   const client = rhClient(env);
 
@@ -58,10 +62,20 @@ export async function liveSubmit(env: Env, job: JobRow) {
       throw new HttpError(402, "provider_balance_insufficient", { remainCoins: balanceBefore.remainCoins, needed: job.estimated_credits, note: "no top-up attempted" });
     }
     if (!/^https:\/\//.test(job.master_url ?? "")) throw new HttpError(422, "master_url_not_https");
-    const img = await providerDeps.fetch(job.master_url!, { redirect: "follow" });
-    const ct = img.headers.get("content-type") ?? "";
-    if (!img.ok || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { status: img.status, content_type: ct.slice(0, 60) });
-    const bytes = await img.arrayBuffer();
+    // A Worker cannot fetch its own workers.dev hostname (404), so our own public CANON path is read from R2 directly.
+    const own = env.PUBLIC_ORIGIN ? `${env.PUBLIC_ORIGIN.replace(/\/$/, "")}/public/canon/` : "";
+    let ct: string, bytes: ArrayBuffer;
+    if (own && job.master_url!.startsWith(own) && /^[A-Za-z0-9_.-]+\.(png|jpe?g|webp)$/.test(job.master_url!.slice(own.length))) {
+      const obj = await env.ASSETS_BUCKET?.get(`public/canon/${job.master_url!.slice(own.length)}`);
+      ct = obj?.httpMetadata?.contentType ?? "";
+      if (!obj || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { source: "r2-public", content_type: ct.slice(0, 60) });
+      bytes = await obj.arrayBuffer();
+    } else {
+      const img = await providerDeps.fetch(job.master_url!, { redirect: "follow" });
+      ct = img.headers.get("content-type") ?? "";
+      if (!img.ok || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { status: img.status, content_type: ct.slice(0, 60) });
+      bytes = await img.arrayBuffer();
+    }
     if (bytes.byteLength < 1024 || bytes.byteLength > MAX_MASTER_BYTES) throw new HttpError(422, "master_image_bad_size", { bytes: bytes.byteLength });
     fileName = await client.upload(bytes, `${job.character_id}.${ct.includes("png") ? "png" : "jpg"}`);
   } catch (e) {
@@ -71,6 +85,13 @@ export async function liveSubmit(env: Env, job: JobRow) {
 
   const workflowId = env.RUNNINGHUB_H3_WORKFLOW_ID || DEFAULT_H3_WORKFLOW_ID;
   const nodes = h3NodeInfo(fileName!, spec.prompt, spec.segments[0]);
+  if (!sheetApproved && override) {
+    // Consume the single-use override atomically right before the paid call (auto-expires after use).
+    const used = await env.DB.prepare(
+      "UPDATE canon_live_overrides SET used_count = used_count + 1, consumed_at = ? WHERE id = ? AND job_id = ? AND used_count < max_uses",
+    ).bind(new Date().toISOString(), override.id, job.id).run();
+    if (!used.meta.changes) { await unclaim(); throw new HttpError(403, "canon_override_already_used"); }
+  }
   let taskId: string;
   try {
     taskId = await client.createTask(workflowId, nodes); // PAID
@@ -83,7 +104,8 @@ export async function liveSubmit(env: Env, job: JobRow) {
   return {
     providerTaskId: taskId!,
     mock: false,
-    meta: { provider: "runninghub-h3", workflow_id: workflowId, uploaded_file: fileName!, balance_before: balanceBefore!, submitted_at: new Date().toISOString(), owner_approval: job.live_approval_ref },
+    meta: { provider: "runninghub-h3", workflow_id: workflowId, uploaded_file: fileName!, balance_before: balanceBefore!, submitted_at: new Date().toISOString(),
+      owner_approval: job.live_approval_ref, canon_override: override ? { id: override.id, approver: override.approver } : null },
   };
 }
 

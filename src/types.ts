@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   ASSETS?: Fetcher;
   ENVIRONMENT: string; // "staging" | "test" | "production"
+  PUBLIC_ORIGIN?: string; // e.g. https://catpaw-alchemy-v3.gogototo24.workers.dev (own public CANON path read via R2)
   LIVE_PROVIDERS_ENABLED?: string; // must be exactly "true" AND not staging AND owner approval id set
   OWNER_LIVE_APPROVAL_ID?: string;
   PUBLISH_GATE_ENABLED?: string; // publisher is not implemented in this build; always fail-closed

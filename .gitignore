@@ -8,3 +8,4 @@ canon-sync/raw/
 canon-sync/out/
 live-test/*.mp4
 live-test/frames/
+live-test/*.log
