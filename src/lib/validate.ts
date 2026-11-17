@@ -1,8 +1,10 @@
 import { HttpError, type Env, type JobSpec, type Line, type Mode } from "../types";
-import { buildALinePrompt, type ALineLook } from "./prompt";
+import { buildALinePrompt, buildBLinePrompt, type ALineLook } from "./prompt";
 
 /** Live providers wired per line. */
 export const LIVE_PROVIDERS_LINE_A = ["runninghub-h3", "pixverse"];
+/** Line B live: RunningHub AI app 「全能图片V1」 (Nano Banana image edit of the approved Master). */
+export const LIVE_PROVIDERS_LINE_B = ["runninghub-nb"];
 
 export const LINES: Record<Line, { name: string; kind: "video" | "image"; minSeg: number; maxSeg: number }> = {
   A: { name: "A 短影音（貓掌江湖／喵台灣）", kind: "video", minSeg: 1, maxSeg: 3 },
@@ -42,7 +44,7 @@ export function parseSpec(body: any): JobSpec {
   let negative_prompt = str(body.negative_prompt);
   let prompt_builder: string | undefined;
   if (body.look !== undefined) {
-    if (line !== "A") throw new HttpError(400, "look_only_for_line_A");
+    if (line !== "A" && line !== "B") throw new HttpError(400, "look_only_for_line_A_or_B");
     if (!body.look || typeof body.look !== "object" || Array.isArray(body.look)) throw new HttpError(400, "invalid_look");
     const look: ALineLook = {};
     for (const k of ["name", "fur", "eyes", "crown_hair", "costume", "weapon", "magic", "motion", "setting"] as const) {
@@ -51,16 +53,16 @@ export function parseSpec(body: any): JobSpec {
       if (typeof v === "string") look[k] = v;
     }
     const seg = Array.isArray(body.segments) ? Number(body.segments[0]) : 5;
-    const built = buildALinePrompt(look, { seconds: Number.isFinite(seg) ? seg : 5 });
+    const built = line === "B" ? buildBLinePrompt(look, str(body.scene)) : buildALinePrompt(look, { seconds: Number.isFinite(seg) ? seg : 5 });
     prompt = prompt ? `${built.prompt} ${prompt}` : built.prompt;
     negative_prompt = negative_prompt ? `${built.negative_prompt}, ${negative_prompt}` : built.negative_prompt;
-    prompt_builder = "a-line-v2";
+    prompt_builder = line === "B" ? "b-line-v1" : "a-line-v2";
   }
   if (prompt.length > 4000) throw new HttpError(400, "prompt_too_long");
   if (negative_prompt && negative_prompt.length > 2000) throw new HttpError(400, "negative_prompt_too_long");
   const provider = str(body.provider);
-  if (provider !== undefined && !(line === "A" && LIVE_PROVIDERS_LINE_A.includes(provider)))
-    throw new HttpError(400, "invalid_provider", { line, allowed: line === "A" ? LIVE_PROVIDERS_LINE_A : [] });
+  const allowedProv = line === "A" ? LIVE_PROVIDERS_LINE_A : line === "B" ? LIVE_PROVIDERS_LINE_B : [];
+  if (provider !== undefined && !allowedProv.includes(provider)) throw new HttpError(400, "invalid_provider", { line, allowed: allowedProv });
   return {
     line,
     mode,
@@ -148,7 +150,12 @@ export function checkCanon(spec: JobSpec, canonIn: Map<string, CanonRow>, opts: 
 export function checkLiveFormat(spec: JobSpec): string[] {
   if (spec.mode !== "live") return [];
   const r: string[] = [];
-  if (spec.line !== "A") r.push("live_only_line_A_supported");
+  if (spec.line === "B") {
+    if (spec.images !== 1) r.push("live_line_B_requires_exactly_one_image");
+    if (spec.provider && !LIVE_PROVIDERS_LINE_B.includes(spec.provider)) r.push("live_provider_not_wired");
+    return r;
+  }
+  if (spec.line !== "A") r.push("live_only_line_A_or_B_supported");
   if (spec.segments.length !== 1) r.push("live_requires_exactly_one_segment");
   if (spec.provider && !LIVE_PROVIDERS_LINE_A.includes(spec.provider)) r.push("live_provider_not_wired");
   return r;

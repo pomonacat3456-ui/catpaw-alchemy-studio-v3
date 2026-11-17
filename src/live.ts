@@ -1,7 +1,8 @@
 import { HttpError, type Env, type JobRow, type JobSpec } from "./types";
-import { LIVE_PROVIDERS_LINE_A, liveAllowed } from "./lib/validate";
+import { LIVE_PROVIDERS_LINE_A, LIVE_PROVIDERS_LINE_B, liveAllowed } from "./lib/validate";
+import { autoImageQa } from "./lib/image";
 import { PixVerseClient, pixGeneratePayload, type PixBalance } from "./providers/pixverse";
-import { DEFAULT_H3_WORKFLOW_ID, ProviderError, RunningHubClient, h3NodeInfo, providerDeps, type Balance } from "./providers/runninghub";
+import { DEFAULT_H3_WORKFLOW_ID, DEFAULT_NB_WEBAPP_ID, IMAGE_TYPES, nbNodeInfo, ProviderError, RunningHubClient, h3NodeInfo, providerDeps, type Balance } from "./providers/runninghub";
 
 const MAX_MASTER_BYTES = 30 * 1024 * 1024;
 
@@ -36,6 +37,14 @@ const PIX = "pixverse";
  * For NORMAL keys the points pool must cover LIVE_POINTS_5S/15S; if the API returns no remainPoint we fail closed
  * unless the owner supplied a manual balance (LIVE_MANUAL_POINTS_BALANCE).
  */
+/** Line B image: plan 點數 must cover the per-image estimate (NORMAL key); fail closed when unknown. */
+export function rhImageBalanceCheck(env: Env, b: Balance, needed: number) {
+  let points = b.remainPoint ?? null, source = "api.remainPoint";
+  if (points == null && env.LIVE_MANUAL_POINTS_BALANCE) { points = Number(env.LIVE_MANUAL_POINTS_BALANCE); source = "owner_manual"; }
+  if (points == null || !Number.isFinite(points)) return { ok: false, pool: "points", reason: "points_balance_unavailable_owner_must_provide", needed };
+  return { ok: points >= needed, pool: "points", remainPoint: points, source, needed, apiType: b.apiType ?? null };
+}
+
 export function rhBalanceCheck(env: Env, b: Balance, segments: number[]) {
   const p5 = Number(env.LIVE_POINTS_5S || 60), p15 = Number(env.LIVE_POINTS_15S || 180);
   const neededPoints = segments.reduce((a, s) => a + (s === 15 ? p15 : p5), 0);
@@ -83,7 +92,9 @@ export async function liveSubmit(env: Env, job: JobRow) {
   const gate = liveAllowed(env);
   if (!gate.allowed) throw new HttpError(403, "live_provider_blocked", { reason: gate.reason, provider: job.provider });
   if (!job.live_approval_ref) throw new HttpError(403, "live_job_not_owner_approved");
-  if (job.line !== "A" || !LIVE_PROVIDERS_LINE_A.includes(job.provider)) throw new HttpError(403, "live_only_line_A_wired_providers", { provider: job.provider });
+  const isB = job.line === "B";
+  if (isB ? !LIVE_PROVIDERS_LINE_B.includes(job.provider) : (job.line !== "A" || !LIVE_PROVIDERS_LINE_A.includes(job.provider)))
+    throw new HttpError(403, "live_provider_not_wired_for_line", { line: job.line, provider: job.provider });
   const spec = JSON.parse(job.spec_json) as JobSpec;
   const canon = await env.DB.prepare("SELECT * FROM canon_characters WHERE id = ?").bind(job.character_id).first<any>();
   const override = await env.DB.prepare(
@@ -97,7 +108,8 @@ export async function liveSubmit(env: Env, job: JobRow) {
   const pix = isPix ? pixClient(env) : null;
 
   // Cap: claim a live submission slot atomically, PER PROVIDER (counts every claim, including failed paid calls).
-  const cap = Math.max(0, Number(env.LIVE_MAX_SUBMISSIONS ?? 1));
+  // Line B has its own total cap (default 0 = closed until the owner opens a window).
+  const cap = Math.max(0, Number((isB ? env.LIVE_MAX_SUBMISSIONS_B : env.LIVE_MAX_SUBMISSIONS) ?? (isB ? 0 : 1)));
   const claimTag = `claim:${job.id}:${crypto.randomUUID()}`;
   const claim = await env.DB.prepare(
     `UPDATE jobs SET provider_task_id = ? WHERE id = ? AND state = 'queued' AND mode = 'live'
@@ -118,7 +130,7 @@ export async function liveSubmit(env: Env, job: JobRow) {
     } else {
       const b = await rh!.accountStatus();
       balanceBefore = b;
-      const chk = rhBalanceCheck(env, b, spec.segments);
+      const chk = isB ? rhImageBalanceCheck(env, b, job.estimated_credits) : rhBalanceCheck(env, b, spec.segments);
       if (!chk.ok) {
         await logEv(env, job.id, "provider_balance_insufficient", chk);
         throw new HttpError(402, "provider_balance_insufficient", { ...chk, note: "no top-up attempted" });
@@ -152,6 +164,10 @@ export async function liveSubmit(env: Env, job: JobRow) {
       extraMeta = { provider: PIX, model: payload.model, quality: payload.quality, duration: payload.duration, img_id: payload.img_id,
         credits_reported_at_submit: g.credits, credits_over_hard_cap: g.credits != null && g.credits > hard };
       if (g.credits != null && g.credits > hard) await logEv(env, job.id, "provider_credits_over_hard_cap", { credits: g.credits, hard_cap: hard });
+    } else if (isB) {
+      const webappId = env.RUNNINGHUB_NB_WEBAPP_ID || DEFAULT_NB_WEBAPP_ID;
+      taskId = await rh!.runApp(webappId, nbNodeInfo(String(uploaded!), spec.prompt)); // PAID
+      extraMeta = { provider: "runninghub-nb", webapp_id: webappId, uploaded_file: uploaded!, size: "900x1600" };
     } else {
       const workflowId = env.RUNNINGHUB_H3_WORKFLOW_ID || DEFAULT_H3_WORKFLOW_ID;
       taskId = await rh!.createTask(workflowId, h3NodeInfo(String(uploaded!), spec.prompt, spec.segments[0])); // PAID
@@ -177,8 +193,9 @@ export async function livePoll(env: Env, job: JobRow, deps: {
   if (job.mode !== "live" || job.state !== "running" || !job.provider_task_id) throw new HttpError(409, "not_a_running_live_job");
   if (job.provider === PIX) return pixPoll(env, job, deps);
   const client = rhClient(env);
+  const isB = job.line === "B";
   let out;
-  try { out = await client.outputs(job.provider_task_id); } catch (e) { asHttp(e); }
+  try { out = await client.outputs(job.provider_task_id, isB ? IMAGE_TYPES : undefined); } catch (e) { asHttp(e); }
   if (out!.status === "running") {
     await logEv(env, job.id, "live_poll", { code: (out as any).code });
     return { job, status: "running" };
@@ -204,11 +221,23 @@ export async function livePoll(env: Env, job: JobRow, deps: {
   if ("remainCoins" in balanceAfter && balanceAfter.remainPoint != null && meta.balance_before?.remainPoint != null)
     meta.point_delta = Math.round((meta.balance_before.remainPoint - balanceAfter.remainPoint) * 100) / 100;
   let r2Key: string | null = null;
+  let autoQa: ReturnType<typeof autoImageQa> | null = null;
   const dl = await providerDeps.fetch(ok.fileUrl);
-  if (dl.ok && env.ASSETS_BUCKET) {
+  if (!dl.ok) meta.download_error = dl.status;
+  else if (isB) {
+    // Line B: buffer the still, run the automated technical QA, store with its real content type.
+    const buf = await dl.arrayBuffer();
+    autoQa = autoImageQa(buf);
+    meta.auto_qa = { ok: autoQa.ok, failed: autoQa.failed, info: autoQa.info, bytes: autoQa.bytes };
+    if (env.ASSETS_BUCKET) {
+      const ext = autoQa.info?.format === "jpeg" ? "jpg" : autoQa.info?.format ?? (ok.fileType || "png");
+      r2Key = `live/${job.id}/${job.provider_task_id}.${ext}`;
+      await env.ASSETS_BUCKET.put(r2Key, buf, { httpMetadata: { contentType: `image/${autoQa.info?.format ?? "png"}` }, customMetadata: { jobId: job.id, taskId: job.provider_task_id } });
+    }
+  } else if (env.ASSETS_BUCKET) {
     r2Key = `live/${job.id}/${job.provider_task_id}.${ok.fileType || "mp4"}`;
     await env.ASSETS_BUCKET.put(r2Key, dl.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { jobId: job.id, taskId: job.provider_task_id } });
-  } else if (!dl.ok) meta.download_error = dl.status;
+  }
   // POINT settlement: record the exact 點數 charged (REAL) under runninghub_points; else RH幣 coins.
   const isPoint = ok.settleMode === "POINT";
   const coins = isPoint ? (ok.chargedPoint ?? meta.point_delta ?? job.reserved_credits) : (ok.consumeCoins ?? job.reserved_credits);
@@ -217,7 +246,7 @@ export async function livePoll(env: Env, job: JobRow, deps: {
   const extra = (tx: string) => [
     env.DB.prepare(`INSERT OR IGNORE INTO assets (id, job_id, step_idx, version, kind, url, provider_task_id, mock, created_at)
       SELECT ?,?,?,?,?,?,?,0,? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
-      .bind(crypto.randomUUID(), job.id, 0, job.attempts, "segment", r2Key ? `r2://${r2Key}` : ok.fileUrl, job.provider_task_id, now, job.id, tx),
+      .bind(crypto.randomUUID(), job.id, 0, job.attempts, isB ? "image" : "segment", r2Key ? `r2://${r2Key}` : ok.fileUrl, job.provider_task_id, now, job.id, tx),
     env.DB.prepare(`INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at)
       SELECT ?, ?, 'provider_charge', ?, ?, 1, ?, ? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
       .bind(crypto.randomUUID(), job.id, coins, chargeScope, tx, now, job.id, tx),
@@ -227,6 +256,19 @@ export async function livePoll(env: Env, job: JobRow, deps: {
   const next = await deps.transition(env, job, "qa",
     { running_since: null, result_url: ok.fileUrl, result_r2_key: r2Key, provider_meta_json: JSON.stringify(meta) },
     { provider_task_id: job.provider_task_id, consume_coins: ok.consumeCoins, r2_key: r2Key }, extra);
+  if (isB) {
+    // Automated QA (owner accepts MZ_003 content as-is): technical checks only; pass -> review, fail -> failed (no paid retry).
+    const failed = !r2Key ? ["not_stored"] : autoQa ? autoQa.failed : ["download_failed"];
+    const rec = { auto: true, checks: { file_ok: !failed.some((f) => /decodable|small|download|stored/.test(f)), size_ok: !failed.some((f) => f.startsWith("resolution")),
+      aspect_ok: !failed.some((f) => f.startsWith("aspect")), provider_ok: true }, failed, info: autoQa?.info ?? null,
+      notes: "auto technical QA; content accepted by owner 2026-11-17 14:23/14:26 for MZ_003", at: now };
+    if (failed.length) {
+      await env.DB.prepare("UPDATE jobs SET qa_json = ? WHERE id = ?").bind(JSON.stringify(rec), job.id).run();
+      const fresh = await env.DB.prepare("SELECT * FROM jobs WHERE id = ?").bind(job.id).first<JobRow>();
+      return { job: await deps.failOrRetry(env, fresh!, `auto_qa_failed:${failed.join(",")}`), status: "auto_qa_failed" };
+    }
+    return { job: await deps.transition(env, next, "review", { qa_json: JSON.stringify(rec) }, rec), status: "succeeded" };
+  }
   return { job: next, status: "succeeded" };
 }
 

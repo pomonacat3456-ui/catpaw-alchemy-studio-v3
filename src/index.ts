@@ -64,6 +64,7 @@ async function health(env: Env) {
     live_providers: liveAllowed(env).allowed,
     live_gate_reason: liveAllowed(env).reason ?? null,
     live_max_submissions: Number(env.LIVE_MAX_SUBMISSIONS ?? 1),
+    live_max_submissions_b: Number(env.LIVE_MAX_SUBMISSIONS_B ?? 0),
     publish_gate: "closed",
     r2_bound: !!env.ASSETS_BUCKET,
     secrets_configured: { admin_key: !!env.ADMIN_KEY, callback_hmac: !!env.CALLBACK_HMAC_SECRET, provider_key: !!env.RUNNINGHUB_API_KEY, pixverse_key: !!env.PIXVERSE_API_KEY },

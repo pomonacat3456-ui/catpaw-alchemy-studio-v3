@@ -7,8 +7,8 @@ import { getAdapter, providerForLine } from "./providers";
 
 export const nowIso = () => new Date().toISOString();
 /** Budget scope: mock jobs and live jobs never share a ledger (live is in provider coins). */
-export const scopeOf = (env: Env, mode: string = "mock") =>
-  mode === "live" ? env.LIVE_BUDGET_SCOPE || "production-live" : env.BUDGET_SCOPE || "staging-mock";
+export const scopeOf = (env: Env, mode: string = "mock", line?: string) =>
+  mode === "live" ? (line === "B" ? env.LIVE_B_BUDGET_SCOPE || "production-live-b" : env.LIVE_BUDGET_SCOPE || "production-live") : env.BUDGET_SCOPE || "staging-mock";
 /** Live jobs never auto-retry (a retry could charge provider credits twice). */
 const maxAttempts = (env: Env, mode: string = "mock") => (mode === "live" ? 1 : Math.max(1, Number(env.MAX_ATTEMPTS || 3)));
 const maxJobCredits = (env: Env, mode: string = "mock") =>
@@ -117,7 +117,7 @@ export async function createJob(env: Env, spec: JobSpec): Promise<{ job: JobRow;
     `INSERT OR IGNORE INTO jobs (id, idempotency_key, line, mode, provider, state, character_id, master_url, aspect, spec_json,
        estimated_credits, max_attempts, created_at, updated_at)
      VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?)`,
-  ).bind(id, key, spec.line, spec.mode, spec.provider ?? providerForLine(spec.line), spec.protagonist, spec.master_url ?? null, spec.aspect,
+  ).bind(id, key, spec.line, spec.mode, spec.provider ?? (spec.mode === "live" && spec.line === "B" ? "runninghub-nb" : providerForLine(spec.line)), spec.protagonist, spec.master_url ?? null, spec.aspect,
     JSON.stringify(spec), estimateCredits(spec, env), maxAttempts(env, spec.mode), now, now).run();
   if (ins.meta.changes) {
     const steps: D1PreparedStatement[] = [];
@@ -184,7 +184,7 @@ export async function preflight(env: Env, job: JobRow): Promise<JobRow> {
   if (est > cap) reasons.push(`cost_estimate_${est}_exceeds_job_cap_${cap}`);
   const estimateRow: ExtraBuilder = (tx) => [env.DB.prepare(
     `INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at) SELECT ?, ?, 'estimate', ?, ?, 0, ?, ? WHERE ${TX_GUARD}`,
-  ).bind(crypto.randomUUID(), job.id, est, scopeOf(env, spec.mode), tx, nowIso(), job.id, tx)];
+  ).bind(crypto.randomUUID(), job.id, est, scopeOf(env, spec.mode, spec.line), tx, nowIso(), job.id, tx)];
   if (reasons.length) return transition(env, mid, "blocked", { blocked_reasons: JSON.stringify(reasons) }, { reasons }, estimateRow);
   return transition(env, mid, "ready", { blocked_reasons: null, estimated_credits: est }, { estimated_credits: est }, estimateRow);
 }
@@ -199,7 +199,7 @@ export async function preflight(env: Env, job: JobRow): Promise<JobRow> {
 export async function enqueue(env: Env, job: JobRow): Promise<JobRow> {
   if (job.state !== "ready") throw new HttpError(409, "invalid_transition", { from: job.state, to: "queued" });
   const c = job.estimated_credits;
-  const scope = scopeOf(env, job.mode);
+  const scope = scopeOf(env, job.mode, job.line);
   const tok = crypto.randomUUID();
   const now = nowIso();
   const DB = env.DB;
@@ -237,7 +237,7 @@ export async function enqueue(env: Env, job: JobRow): Promise<JobRow> {
 function releaseStmts(env: Env, job: JobRow): ExtraBuilder {
   return (tx) => {
     if (!job.reserved_credits) return [];
-    const scope = scopeOf(env, job.mode);
+    const scope = scopeOf(env, job.mode, job.line);
     return [
       env.DB.prepare(
         `INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at)
@@ -344,7 +344,7 @@ export async function qa(env: Env, job: JobRow, body: any): Promise<JobRow> {
 
 export async function deliver(env: Env, job: JobRow): Promise<JobRow> {
   if (job.state !== "approved") throw new HttpError(409, "invalid_transition", { from: job.state, to: "delivered" });
-  const scope = scopeOf(env, job.mode);
+  const scope = scopeOf(env, job.mode, job.line);
   const c = job.reserved_credits;
   const commit: ExtraBuilder = (tx) => [
     env.DB.prepare(

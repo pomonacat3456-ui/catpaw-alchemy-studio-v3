@@ -9,6 +9,17 @@
  */
 export const DEFAULT_H3_WORKFLOW_ID = "2114090140428013570"; // 「貓掌江湖｜H3 API 單圖｜5秒低解析測試」
 export const VIDEO_TYPES = ["mp4", "mov", "webm"];
+export const IMAGE_TYPES = ["png", "jpg", "jpeg", "webp"];
+/** RunningHub AI app 「全能图片V1」 (Nano Banana single-image edit), callable with consumer-member keys (points). */
+export const DEFAULT_NB_WEBAPP_ID = "1960491621961953282";
+export function nbNodeInfo(fileName: string, prompt: string, width = 900, height = 1600) {
+  return [
+    { nodeId: "4", fieldName: "image", fieldValue: fileName },
+    { nodeId: "17", fieldName: "text", fieldValue: prompt },
+    { nodeId: "13", fieldName: "height", fieldValue: String(height) },
+    { nodeId: "13", fieldName: "width", fieldValue: String(width) },
+  ];
+}
 
 /** Swappable for tests (mocked fetch). Production uses global fetch. */
 export const providerDeps: { fetch: typeof fetch } = { fetch: (...a: Parameters<typeof fetch>) => fetch(...a) };
@@ -87,18 +98,25 @@ export class RunningHubClient {
     if (p?.code !== 0 || !taskId) throw new ProviderError("provider_create_failed", { code: p?.code, msg: this.scrub(p?.msg) });
     return String(taskId);
   }
-  async outputs(taskId: string): Promise<OutputsResult> {
+  /** PAID. Run a RunningHub AI app (webapp) task. */
+  async runApp(webappId: string, nodeInfoList: unknown[]): Promise<string> {
+    const p = await this.postJson("/task/openapi/ai-app/run", { apiKey: this.apiKey, webappId, nodeInfoList });
+    const taskId = p?.data?.taskId;
+    if (p?.code !== 0 || !taskId) throw new ProviderError("provider_create_failed", { code: p?.code, msg: this.scrub(p?.msg) });
+    return String(taskId);
+  }
+  async outputs(taskId: string, types: string[] = VIDEO_TYPES): Promise<OutputsResult> {
     const p = await this.postJson("/task/openapi/outputs", { apiKey: this.apiKey, taskId });
     const code = Number(p?.code);
     if (code === 805) return { status: "failed", code, reason: this.scrub(p?.data?.failedReason ?? p?.msg ?? "failed") };
     if (code === 0 && Array.isArray(p.data) && p.data.length) {
-      const v = p.data.find((d: any) => VIDEO_TYPES.includes(String(d.fileType ?? "").toLowerCase()) ||
-        VIDEO_TYPES.some((e) => String(d.fileUrl ?? "").toLowerCase().split("?")[0].endsWith("." + e)));
-      if (!v) return { status: "failed", code, reason: "no_video_output" };
+      const v = p.data.find((d: any) => types.includes(String(d.fileType ?? "").toLowerCase()) ||
+        types.some((e) => String(d.fileUrl ?? "").toLowerCase().split("?")[0].endsWith("." + e)));
+      if (!v) return { status: "failed", code, reason: types === VIDEO_TYPES ? "no_video_output" : "no_image_output" };
       return {
         status: "succeeded",
         fileUrl: String(v.fileUrl),
-        fileType: String(v.fileType ?? "mp4"),
+        fileType: String(v.fileType ?? (types === VIDEO_TYPES ? "mp4" : "png")),
         consumeCoins: v.consumeCoins != null ? Number(v.consumeCoins) : null,
         taskCostTime: v.taskCostTime != null ? String(v.taskCostTime) : null,
         settleMode: v.settleMode != null ? String(v.settleMode) : null,

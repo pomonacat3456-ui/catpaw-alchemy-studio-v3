@@ -82,3 +82,25 @@ export function inlineNegative(b: BuiltPrompt, maxLen = 2048): string {
   const s = `${b.prompt} Avoid: ${b.negative_prompt}.`;
   return s.length <= maxLen ? s : b.prompt.slice(0, maxLen);
 }
+
+/**
+ * B-line (寫真 still) prompt for an image-EDIT model fed the approved Master: keep identity, change scene/pose.
+ * Owner 2026-11-17 14:23/14:26: MZ_003's costume and hands are accepted as in the Master, so B does not re-style them.
+ */
+export function buildBLinePrompt(look: ALineLook, scene?: string): BuiltPrompt {
+  const name = clean(look.name);
+  const keep: string[] = [];
+  if (clean(look.fur)) keep.push(clean(look.fur));
+  if (clean(look.eyes)) keep.push(clean(look.eyes));
+  if (clean(look.crown_hair)) keep.push(clean(look.crown_hair));
+  if (clean(look.costume)) keep.push(clean(look.costume));
+  const prompt = [
+    `Keep this exact character${name ? ` (${name})` : ""} from the reference image: same cat face, cat ears, crown, hair, costume, colours and accessories; she is a female cat.`,
+    keep.length ? `Locked design: ${keep.join("; ")}.` : "",
+    isMagicOnly(look.weapon) ? `No weapon; ${clean(look.magic) || "elemental magic"} effects only.` : `Weapon: ${clean(look.weapon)}.`,
+    `New photo: ${clean(scene) || clean(look.setting) || "a three-quarter portrait on a dark smoky stage"}.`,
+    "Vertical 9:16 portrait photograph, single character, Taiwanese glove-puppet (布袋戲偶) photo-shoot lighting, sharp detail.",
+    "No text, no watermark, no logo, no extra characters.",
+  ].filter(Boolean).join(" ");
+  return { prompt, negative_prompt: "text, watermark, logo, extra characters, duplicate character, deformed, extra limbs, blurry" };
+}

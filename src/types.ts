@@ -16,7 +16,11 @@ export interface Env {
   RUNNINGHUB_API_KEY?: string; // secret
   RUNNINGHUB_BASE_URL?: string;
   RUNNINGHUB_H3_WORKFLOW_ID?: string;
-  LIVE_MAX_SUBMISSIONS?: string; // total live submissions ever allowed (default 1)
+  LIVE_MAX_SUBMISSIONS?: string; // total live submissions ever allowed per provider (default 1)
+  LIVE_MAX_SUBMISSIONS_B?: string; // line B (runninghub-nb) live submissions allowed in total (default 0 = closed)
+  LIVE_B_BUDGET_SCOPE?: string; // default production-live-b (RunningHub points)
+  LIVE_POINTS_IMAGE?: string; // points estimate per B image (default 20)
+  RUNNINGHUB_NB_WEBAPP_ID?: string; // default 1960491621961953282 「全能图片V1」
   LIVE_BUDGET_SCOPE?: string; // default production-live (RunningHub coins)
   LIVE_COINS_5S?: string; // estimate per 5s H3 segment
   LIVE_COINS_15S?: string;
@@ -99,7 +103,7 @@ export interface JobSpec {
   prompt: string;
   negative_prompt?: string; // built by the A-line prompt builder; never checked against FORBIDDEN terms (it lists them)
   provider?: string; // optional override for line A: "runninghub-h3" (default) | "pixverse"
-  prompt_builder?: string; // e.g. "a-line-v2" when the prompt was built server-side from `look`
+  prompt_builder?: string; // e.g. "a-line-v2" / "b-line-v1" when the prompt was built server-side from `look`
   client_ref?: string;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { A_LINE_NEGATIVE, buildALinePrompt, inlineNegative, isMagicOnly } from "../src/lib/prompt";
+import { A_LINE_NEGATIVE, buildALinePrompt, buildBLinePrompt, inlineNegative, isMagicOnly } from "../src/lib/prompt";
 import { checkCanon, parseSpec } from "../src/lib/validate";
 
 // Fixture look only (no private CANON data in a public repo).
@@ -47,9 +47,23 @@ describe("A-line prompt builder (a-line-v2)", () => {
     expect(s.length).toBeLessThanOrEqual(2048);
   });
   it("rejects bad look/provider input", () => {
-    expect(() => parseSpec({ line: "B", protagonist: "X", look: LOOK })).toThrow("look_only_for_line_A");
+    expect(() => parseSpec({ line: "C", protagonist: "X", look: LOOK })).toThrow("look_only_for_line_A_or_B");
     expect(() => parseSpec({ line: "A", protagonist: "X", look: { fur: 3 } })).toThrow("invalid_look_field");
     expect(() => parseSpec({ line: "A", protagonist: "X", provider: "kling" })).toThrow("invalid_provider");
     expect(() => parseSpec({ line: "C", protagonist: "X", provider: "pixverse" })).toThrow("invalid_provider");
+  });
+});
+
+describe("B-line prompt builder (b-line-v1)", () => {
+  it("keeps identity from the reference, sets the scene, 9:16 still, no text; passes forbidden-term check", () => {
+    const b = buildBLinePrompt(LOOK, "sitting on a carved throne");
+    expect(b.prompt).toContain("Keep this exact character (測試火焰喵)");
+    expect(b.prompt).toContain("New photo: sitting on a carved throne.");
+    expect(b.prompt).toContain("Vertical 9:16 portrait photograph");
+    expect(b.prompt).toContain("No weapon; fire magic effects only.");
+    const s = parseSpec({ line: "B", mode: "live", protagonist: "X", master_url: "https://x.test/m.png", images: 1, look: LOOK, scene: "throne" });
+    expect(s.prompt_builder).toBe("b-line-v1");
+    const canon = new Map([["X", { id: "X", display_name: "X", sex: "female", species: "cat", master_url: "https://x.test/m.png", approved: 1, source: "canon-sheet-v3" }]]);
+    expect(checkCanon(s, canon as any)).toEqual([]);
   });
 });
