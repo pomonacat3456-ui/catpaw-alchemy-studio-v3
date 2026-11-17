@@ -58,9 +58,12 @@ export interface CanonRow {
   sex: string;
   species: string;
   master_url: string;
-  approved: number;
+  approved: number; // live/production-eligible (all sheet gates open)
+  mock_eligible?: number | null; // CANON_LOCKED + approved Master asset with https URL (mock jobs only)
   source: string;
 }
+
+export interface CanonOpts { mode?: "mock" | "live"; environment?: string }
 
 /** Duration / format rules per line. Returns list of blocking reasons. */
 export function checkFormat(spec: JobSpec): string[] {
@@ -85,14 +88,19 @@ export function checkFormat(spec: JobSpec): string[] {
  * the job must carry the protagonist's approved Master URL exactly; prompt must not
  * request forbidden features.
  */
-export function checkCanon(spec: JobSpec, canon: Map<string, CanonRow>): string[] {
+export function checkCanon(spec: JobSpec, canonIn: Map<string, CanonRow>, opts: CanonOpts = {}): string[] {
   const r: string[] = [];
+  const mode = opts.mode ?? spec.mode;
+  // Production never trusts staging fixture rows.
+  const canon = new Map([...canonIn].filter(([, c]) => !(opts.environment === "production" && c.source === "staging-fixture")));
   for (const id of spec.cast) {
     const c = canon.get(id);
     if (!c) { r.push(`canon_unregistered_character:${id}`); continue; }
     if (c.sex !== "female") r.push(`canon_all_female_rule_violated:${id}`);
     if (c.species !== "cat") r.push(`canon_not_a_cat:${id}`);
-    if (!c.approved) r.push(`canon_character_not_approved:${id}`);
+    if (mode === "live") {
+      if (!c.approved) r.push(`canon_character_not_approved_for_live:${id}`);
+    } else if (!c.approved && !c.mock_eligible) r.push(`canon_character_not_approved:${id}`);
   }
   const p = canon.get(spec.protagonist);
   if (!spec.master_url) r.push("canon_missing_master_url");
@@ -100,6 +108,15 @@ export function checkCanon(spec: JobSpec, canon: Map<string, CanonRow>): string[
   else if (p && p.master_url !== spec.master_url) r.push("canon_master_url_not_the_approved_master");
   const lower = spec.prompt.toLowerCase();
   for (const t of FORBIDDEN_PROMPT_TERMS) if (lower.includes(t.toLowerCase())) r.push(`canon_forbidden_term:${t}`);
+  return r;
+}
+
+/** Extra format rules for live jobs: only line A single-segment H3 image-to-video is wired. */
+export function checkLiveFormat(spec: JobSpec): string[] {
+  if (spec.mode !== "live") return [];
+  const r: string[] = [];
+  if (spec.line !== "A") r.push("live_only_line_A_supported");
+  if (spec.segments.length !== 1) r.push("live_requires_exactly_one_segment");
   return r;
 }
 

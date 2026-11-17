@@ -1,14 +1,18 @@
 import { HttpError, type Env, type JobRow, type JobSpec, type JobState } from "./types";
 import { canonicalJson, sha256Hex } from "./lib/crypto";
 import { canTransition, TERMINAL } from "./lib/states";
-import { checkCanon, checkFormat, liveAllowed, type CanonRow } from "./lib/validate";
-import { estimateCredits } from "./lib/cost";
+import { checkCanon, checkFormat, checkLiveFormat, liveAllowed, type CanonRow } from "./lib/validate";
+import { creditUnit, estimateCredits } from "./lib/cost";
 import { getAdapter, providerForLine } from "./providers";
 
 export const nowIso = () => new Date().toISOString();
-const scopeOf = (env: Env) => env.BUDGET_SCOPE || "staging-mock";
-const maxAttempts = (env: Env) => Math.max(1, Number(env.MAX_ATTEMPTS || 3));
-const maxJobCredits = (env: Env) => Number(env.MAX_JOB_CREDITS || 30);
+/** Budget scope: mock jobs and live jobs never share a ledger (live is in provider coins). */
+export const scopeOf = (env: Env, mode: string = "mock") =>
+  mode === "live" ? env.LIVE_BUDGET_SCOPE || "production-live" : env.BUDGET_SCOPE || "staging-mock";
+/** Live jobs never auto-retry (a retry could charge provider credits twice). */
+const maxAttempts = (env: Env, mode: string = "mock") => (mode === "live" ? 1 : Math.max(1, Number(env.MAX_ATTEMPTS || 3)));
+const maxJobCredits = (env: Env, mode: string = "mock") =>
+  mode === "live" ? Number(env.LIVE_MAX_JOB_COINS || 400) : Number(env.MAX_JOB_CREDITS || 30);
 
 export async function idempotencyKey(spec: JobSpec): Promise<string> {
   // Stable over key order / cast order; any change of content => new key.
@@ -24,7 +28,7 @@ export function newJobId(line: string): string {
 export function labels(job: JobRow) {
   return {
     mock: job.mode === "mock",
-    paid: false,
+    paid: job.paid === 1, // true only after a live provider submission (consumes prepaid provider credits)
     published: false,
     rebuild: "fresh-rebuild-not-zip-restore",
   };
@@ -43,7 +47,11 @@ export function view(job: JobRow) {
     aspect: job.aspect,
     spec: JSON.parse(job.spec_json),
     idempotency_key: job.idempotency_key,
-    credits: { estimated: job.estimated_credits, reserved: job.reserved_credits, spent_mock: job.spent_credits, unit: "mock-credit" },
+    credits: { estimated: job.estimated_credits, reserved: job.reserved_credits, spent: job.spent_credits, unit: creditUnit(job.mode) },
+    live_approval_ref: job.live_approval_ref ?? null,
+    provider_meta: job.provider_meta_json ? JSON.parse(job.provider_meta_json) : null,
+    result_url: job.result_url ?? null,
+    result_r2_key: job.result_r2_key ?? null,
     attempts: job.attempts,
     max_attempts: job.max_attempts,
     provider_task_id: job.provider_task_id,
@@ -110,7 +118,7 @@ export async function createJob(env: Env, spec: JobSpec): Promise<{ job: JobRow;
        estimated_credits, max_attempts, created_at, updated_at)
      VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?)`,
   ).bind(id, key, spec.line, spec.mode, providerForLine(spec.line), spec.protagonist, spec.master_url ?? null, spec.aspect,
-    JSON.stringify(spec), estimateCredits(spec), maxAttempts(env), now, now).run();
+    JSON.stringify(spec), estimateCredits(spec, env), maxAttempts(env, spec.mode), now, now).run();
   if (ins.meta.changes) {
     const steps: D1PreparedStatement[] = [];
     const mk = (idx: number, kind: string, dur: number | null) =>
@@ -141,16 +149,21 @@ export async function loadCanon(env: Env, ids: string[]): Promise<Map<string, Ca
 export async function preflight(env: Env, job: JobRow): Promise<JobRow> {
   const spec = JSON.parse(job.spec_json) as JobSpec;
   const mid = await transition(env, job, "preflight");
-  const reasons = [...checkFormat(spec), ...checkCanon(spec, await loadCanon(env, spec.cast))];
+  const reasons = [
+    ...checkFormat(spec),
+    ...checkLiveFormat(spec),
+    ...checkCanon(spec, await loadCanon(env, spec.cast), { mode: spec.mode, environment: env.ENVIRONMENT }),
+  ];
   if (spec.mode === "live") {
     const g = liveAllowed(env);
     if (!g.allowed) reasons.push(`live_blocked:${g.reason}`);
   }
-  const est = estimateCredits(spec);
-  if (est > maxJobCredits(env)) reasons.push(`cost_estimate_${est}_exceeds_job_cap_${maxJobCredits(env)}`);
+  const est = estimateCredits(spec, env);
+  const cap = maxJobCredits(env, spec.mode);
+  if (est > cap) reasons.push(`cost_estimate_${est}_exceeds_job_cap_${cap}`);
   const estimateRow: ExtraBuilder = (tx) => [env.DB.prepare(
     `INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at) SELECT ?, ?, 'estimate', ?, ?, 0, ?, ? WHERE ${TX_GUARD}`,
-  ).bind(crypto.randomUUID(), job.id, est, scopeOf(env), tx, nowIso(), job.id, tx)];
+  ).bind(crypto.randomUUID(), job.id, est, scopeOf(env, spec.mode), tx, nowIso(), job.id, tx)];
   if (reasons.length) return transition(env, mid, "blocked", { blocked_reasons: JSON.stringify(reasons) }, { reasons }, estimateRow);
   return transition(env, mid, "ready", { blocked_reasons: null, estimated_credits: est }, { estimated_credits: est }, estimateRow);
 }
@@ -165,7 +178,7 @@ export async function preflight(env: Env, job: JobRow): Promise<JobRow> {
 export async function enqueue(env: Env, job: JobRow): Promise<JobRow> {
   if (job.state !== "ready") throw new HttpError(409, "invalid_transition", { from: job.state, to: "queued" });
   const c = job.estimated_credits;
-  const scope = scopeOf(env);
+  const scope = scopeOf(env, job.mode);
   const tok = crypto.randomUUID();
   const now = nowIso();
   const DB = env.DB;
@@ -203,7 +216,7 @@ export async function enqueue(env: Env, job: JobRow): Promise<JobRow> {
 function releaseStmts(env: Env, job: JobRow): ExtraBuilder {
   return (tx) => {
     if (!job.reserved_credits) return [];
-    const scope = scopeOf(env);
+    const scope = scopeOf(env, job.mode);
     return [
       env.DB.prepare(
         `INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at)
@@ -216,7 +229,7 @@ function releaseStmts(env: Env, job: JobRow): ExtraBuilder {
   };
 }
 
-/** queued -> running: submit to adapter (mock by default; live adapter fails closed). */
+/** queued -> running: submit to adapter (mock by default; live adapter is gated, see src/live.ts). */
 export async function run(env: Env, job: JobRow): Promise<JobRow> {
   if (job.state !== "queued") throw new HttpError(409, "invalid_transition", { from: job.state, to: "running" });
   const attempt = job.attempts + 1;
@@ -228,8 +241,9 @@ export async function run(env: Env, job: JobRow): Promise<JobRow> {
     if (e instanceof HttpError) await logEvent(env, job.id, "provider_submit_refused", { code: e.code, detail: e.detail });
     throw e;
   }
-  return transition(env, job, "running", { attempts: attempt, provider_task_id: sub.providerTaskId, running_since: nowIso(), last_error: null },
-    { provider: adapter.name, mock: sub.mock, provider_task_id: sub.providerTaskId, attempt });
+  const set: Record<string, unknown> = { attempts: attempt, provider_task_id: sub.providerTaskId, running_since: nowIso(), last_error: null };
+  if (!sub.mock) { set.paid = 1; set.provider_meta_json = JSON.stringify(sub.meta ?? {}); }
+  return transition(env, job, "running", set, { provider: adapter.name, mock: sub.mock, provider_task_id: sub.providerTaskId, attempt });
 }
 
 /** Failure path shared by provider failure, timeout, QA fail and review rework: retry if attempts left, else fail + release. */
@@ -265,6 +279,7 @@ export async function handleCallback(env: Env, p: CallbackPayload) {
     return { duplicate: true, job: view(await getJob(env, p.job_id)) };
   }
   const job = await getJob(env, p.job_id);
+  if (job.mode === "live") throw new HttpError(409, "live_jobs_use_provider_polling");
   if (job.state !== "running" || job.provider_task_id !== p.provider_task_id) {
     await logEvent(env, job.id, "callback_stale_ignored", { event_id: p.event_id, state: job.state, provider_task_id: p.provider_task_id });
     throw new HttpError(409, "stale_callback", { state: job.state });
@@ -308,7 +323,7 @@ export async function qa(env: Env, job: JobRow, body: any): Promise<JobRow> {
 
 export async function deliver(env: Env, job: JobRow): Promise<JobRow> {
   if (job.state !== "approved") throw new HttpError(409, "invalid_transition", { from: job.state, to: "delivered" });
-  const scope = scopeOf(env);
+  const scope = scopeOf(env, job.mode);
   const c = job.reserved_credits;
   const commit: ExtraBuilder = (tx) => [
     env.DB.prepare(
@@ -327,7 +342,11 @@ export async function deliver(env: Env, job: JobRow): Promise<JobRow> {
 export async function sweepTimeouts(env: Env, nowMs = Date.now()) {
   const timeoutSec = Number(env.RUNNING_TIMEOUT_SEC || 900);
   const cutoff = new Date(nowMs - timeoutSec * 1000).toISOString();
-  const rows = await env.DB.prepare("SELECT * FROM jobs WHERE state = 'running' AND running_since IS NOT NULL AND running_since < ? LIMIT 50").bind(cutoff).all<JobRow>();
+  const liveCutoff = new Date(nowMs - Number(env.LIVE_TIMEOUT_SEC || 3600) * 1000).toISOString();
+  const rows = await env.DB.prepare(
+    `SELECT * FROM jobs WHERE state = 'running' AND running_since IS NOT NULL
+       AND ((mode = 'mock' AND running_since < ?) OR (mode = 'live' AND running_since < ?)) LIMIT 50`,
+  ).bind(cutoff, liveCutoff).all<JobRow>();
   const out: { jobId: string; state: string }[] = [];
   for (const j of rows.results) {
     try {

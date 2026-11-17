@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Live verification of the STAGING worker with curl. Secrets are read from files and never printed.
-# Usage: BASE=https://catpaw-alchemy-v3-staging.<sub>.workers.dev scripts/verify-staging.sh | tee verify/staging-curl-<date>.log
+# Usage: BASE=https://catpaw-alchemy-v3-staging.<sub>.workers.dev scripts/verify.sh | tee verify/staging-curl-<date>.log
+# Production: BASE=https://catpaw-alchemy-v3.<sub>.workers.dev ADMIN_FILE=.../catpaw_alchemy_v3_prod_admin_key HMAC_FILE=.../catpaw_alchemy_v3_prod_callback_hmac_secret
+#   (CHAR/MASTER auto-detected from /api/canon: first mock-eligible CANON row). Only MOCK jobs are created here.
 set -euo pipefail
 BASE="${BASE:?set BASE}"
 ADMIN_FILE="${ADMIN_FILE:-/home/box/secrets/catpaw_alchemy_v3_admin_key}"
@@ -47,13 +49,19 @@ check "health published" "$(printf '%s' "$BODY" | jget '["published"]')" false
 log "## 2. auth"
 out=$(curl -sS -o /dev/null -w '%{http_code}' -H 'x-admin-key: wrong' "$BASE/api/jobs"); check "wrong admin key -> 401" "$out" 401
 
-MASTER='https://canon-fixtures.invalid/master/fixture-fulan-v1.png'
+if [ -z "${CHAR:-}" ]; then
+  req GET /api/canon
+  read -r CHAR MASTER < <(printf '%s' "$BODY" | python3 -c 'import sys,json;cs=[c for c in json.load(sys.stdin)["characters"] if c.get("mock_eligible") or c.get("approved")];c=cs[0];print(c["id"],c["master_url"])')
+fi
+log "  using CANON character $CHAR (mock jobs only)"
+MASTER="${MASTER:?}"
+
 declare -A EXTRA=( [A]='"segments":[5,15]' [B]='"images":3' [C]='"segments":[15,15],"audio_ref":"mock://audio/theme.wav"' [D]='"segments":[15,15,5]' )
 declare -A QA=( [A]='{"safe_area":true,"audio":true,"image_quality":true,"character_consistency":true,"tail_frame":true}' [B]='{"safe_area":true,"image_quality":true,"character_consistency":true}' )
 QA[C]="${QA[A]}"; QA[D]="${QA[A]}"
 for L in A B C D; do
   log "## 3.$L line $L full mock flow"
-  BODYJ="{\"line\":\"$L\",\"mode\":\"mock\",\"protagonist\":\"fixture-fulan\",\"master_url\":\"$MASTER\",${EXTRA[$L]},\"prompt\":\"$RUN line $L 全母喵布袋戲偶\"}"
+  BODYJ="{\"line\":\"$L\",\"mode\":\"mock\",\"protagonist\":\"$CHAR\",\"master_url\":\"$MASTER\",${EXTRA[$L]},\"prompt\":\"$RUN line $L 全母喵布袋戲偶\"}"
   req POST /api/jobs "$BODYJ"; check "$L create 201" "$CODE" 201
   ID=$(printf '%s' "$BODY" | jget '["job"]["jobId"]'); log "  jobId=$ID"; echo "$L $ID" >> "${JOBS_FILE:-/dev/null}"
   req POST "/api/jobs/$ID/preflight"; check "$L preflight ready" "$(printf '%s' "$BODY" | jget '["job"]["state"]')" ready
@@ -80,19 +88,19 @@ check "repeat deduplicated" "$(printf '%s' "$BODY" | jget '["deduplicated"]')" t
 check "repeat same jobId" "$(printf '%s' "$BODY" | jget '["job"]["jobId"]')" "$A_ID"
 
 log "## 5. CANON rejection"
-req POST /api/jobs "{\"line\":\"A\",\"protagonist\":\"fixture-fulan\",\"segments\":[5],\"prompt\":\"$RUN no master\",\"auto_preflight\":true}"
+req POST /api/jobs "{\"line\":\"A\",\"protagonist\":\"$CHAR\",\"segments\":[5],\"prompt\":\"$RUN no master\",\"auto_preflight\":true}"
 check "missing master URL -> blocked" "$(printf '%s' "$BODY" | jget '["job"]["state"]')" blocked
 C1=$(printf '%s' "$BODY" | jget '["job"]["jobId"]')
 req POST /api/jobs "{\"line\":\"A\",\"protagonist\":\"random-tomcat\",\"master_url\":\"https://example.com/x.png\",\"segments\":[5],\"prompt\":\"$RUN unregistered\",\"auto_preflight\":true}"
 check "unregistered protagonist -> blocked" "$(printf '%s' "$BODY" | jget '["job"]["state"]')" blocked
-req POST /api/jobs "{\"line\":\"A\",\"protagonist\":\"fixture-fulan\",\"master_url\":\"$MASTER\",\"segments\":[10],\"prompt\":\"$RUN 10s\",\"auto_preflight\":true}"
+req POST /api/jobs "{\"line\":\"A\",\"protagonist\":\"$CHAR\",\"master_url\":\"$MASTER\",\"segments\":[10],\"prompt\":\"$RUN 10s\",\"auto_preflight\":true}"
 check "10s segment -> blocked" "$(printf '%s' "$BODY" | jget '["job"]["state"]')" blocked
 req POST "/api/jobs/$C1/enqueue"; check "blocked job enqueue -> 409" "$CODE" 409
-req POST /api/jobs "{\"line\":\"A\",\"mode\":\"live\",\"protagonist\":\"fixture-fulan\",\"master_url\":\"$MASTER\",\"segments\":[5],\"prompt\":\"$RUN live\",\"auto_preflight\":true}"
+req POST /api/jobs "{\"line\":\"A\",\"mode\":\"live\",\"protagonist\":\"$CHAR\",\"master_url\":\"$MASTER\",\"segments\":[5],\"prompt\":\"$RUN live\",\"auto_preflight\":true}"
 check "live mode -> blocked (paid block)" "$(printf '%s' "$BODY" | jget '["job"]["state"]')" blocked
 
 log "## 6. forged / duplicate callbacks"
-req POST /api/jobs "{\"line\":\"B\",\"protagonist\":\"fixture-fulan\",\"master_url\":\"$MASTER\",\"images\":1,\"prompt\":\"$RUN cb\",\"auto_preflight\":true}"
+req POST /api/jobs "{\"line\":\"B\",\"protagonist\":\"$CHAR\",\"master_url\":\"$MASTER\",\"images\":1,\"prompt\":\"$RUN cb\",\"auto_preflight\":true}"
 F_ID=$(printf '%s' "$BODY" | jget '["job"]["jobId"]')
 req POST "/api/jobs/$F_ID/enqueue"; req POST "/api/jobs/$F_ID/run"; F_TASK=$(printf '%s' "$BODY" | jget '["job"]["provider_task_id"]')
 callback "{\"event_id\":\"$RUN-forged\",\"job_id\":\"$F_ID\",\"provider_task_id\":\"$F_TASK\",\"status\":\"succeeded\"}" "attacker-secret"

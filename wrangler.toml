@@ -28,3 +28,41 @@ migrations_dir = "migrations"
 
 [triggers]
 crons = ["*/30 * * * *"]  # timeout sweep (free tier)
+
+# ───────────────────────── PRODUCTION (separate Worker, D1, R2, secrets) ─────────────────────────
+# Deploy: npx wrangler deploy --env production    (workers.dev only, no custom domain)
+[env.production]
+name = "catpaw-alchemy-v3"
+workers_dev = true
+preview_urls = false
+
+[env.production.vars]
+ENVIRONMENT = "production"
+# Live stays OFF until: provider key set, a CANON row is live-approved by the sheet, and the owner approved the single job.
+LIVE_PROVIDERS_ENABLED = "false"
+LIVE_MAX_SUBMISSIONS = "1"
+LIVE_BUDGET_SCOPE = "production-live"
+LIVE_COINS_5S = "350"
+LIVE_COINS_15S = "950"
+LIVE_MAX_JOB_COINS = "400"
+LIVE_TIMEOUT_SEC = "3600"
+RUNNINGHUB_H3_WORKFLOW_ID = "2114090140428013570"
+PUBLISH_GATE_ENABLED = "false"
+BUDGET_SCOPE = "production-mock"
+MAX_ATTEMPTS = "3"
+RUNNING_TIMEOUT_SEC = "900"
+MAX_JOB_CREDITS = "30"
+# Secrets: ADMIN_KEY, CALLBACK_HMAC_SECRET, OWNER_LIVE_APPROVAL_ID, RUNNINGHUB_API_KEY (only when provided)
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "catpaw-alchemy-v3"
+database_id = "25218f6e-7441-4ad9-91fa-3cd371aa40a9"
+migrations_dir = "migrations"
+
+[[env.production.r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "catpaw-alchemy-v3-assets"
+
+[env.production.triggers]
+crons = ["*/10 * * * *"]  # live polling + timeout sweep (free tier)

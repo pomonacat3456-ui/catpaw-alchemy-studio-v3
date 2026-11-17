@@ -5,6 +5,16 @@ on:
 permissions:
   contents: read
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (full history)
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz | tar xz gitleaks
+          ./gitleaks git . --redact --no-banner --exit-code 1
   test:
     runs-on: ubuntu-latest
     steps:
@@ -16,4 +26,4 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-# No deploy job on purpose: staging deploys are manual (wrangler, owner's Cloudflare account); production needs owner approval.
+# No deploy job on purpose: deploys are manual (wrangler, owner's Cloudflare account).

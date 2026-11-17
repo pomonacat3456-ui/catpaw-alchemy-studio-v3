@@ -1,7 +1,7 @@
-import { HttpError, type Env, type JobRow } from "../types";
-import { liveAllowed } from "../lib/validate";
+import type { Env, JobRow } from "../types";
+import { liveSubmit } from "../live";
 
-export interface SubmitResult { providerTaskId: string; mock: boolean }
+export interface SubmitResult { providerTaskId: string; mock: boolean; meta?: unknown }
 export interface ProviderAdapter {
   name: string;
   mock: boolean;
@@ -23,17 +23,16 @@ export class MockAdapter implements ProviderAdapter {
 }
 
 /**
- * Live adapter: FAILS CLOSED. It refuses unless ENVIRONMENT=production, LIVE_PROVIDERS_ENABLED=true
- * and an owner approval id are all present — and even then this rebuild ships NO live HTTP code
- * path (P4: needs a reviewed PR + owner approval for a single paid test).
+ * Live adapter: FAILS CLOSED. Refuses unless ENVIRONMENT=production, LIVE_PROVIDERS_ENABLED=true,
+ * OWNER_LIVE_APPROVAL_ID set, the job carries a per-job owner approval, the global live submission cap
+ * is not reached, the provider key exists, CANON is live-approved, and the provider balance covers the estimate.
+ * Only RunningHub H3 (line A, single segment) is wired.
  */
 export class LiveAdapter implements ProviderAdapter {
   mock = false;
   constructor(public name: string, private env: Env) {}
-  async submit(_job: JobRow, _attempt: number): Promise<SubmitResult> {
-    const gate = liveAllowed(this.env);
-    if (!gate.allowed) throw new HttpError(403, "live_provider_blocked", { reason: gate.reason, provider: this.name });
-    throw new HttpError(501, "live_provider_not_implemented", { provider: this.name, note: "pending owner-approved P4 integration" });
+  async submit(job: JobRow, _attempt: number): Promise<SubmitResult> {
+    return liveSubmit(this.env, job);
   }
 }
 

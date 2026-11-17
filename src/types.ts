@@ -11,6 +11,17 @@ export interface Env {
   MAX_JOB_CREDITS?: string;
   ADMIN_KEY?: string; // secret
   CALLBACK_HMAC_SECRET?: string; // secret
+  // --- live provider (production only, all fail-closed) ---
+  RUNNINGHUB_API_KEY?: string; // secret
+  RUNNINGHUB_BASE_URL?: string;
+  RUNNINGHUB_H3_WORKFLOW_ID?: string;
+  LIVE_MAX_SUBMISSIONS?: string; // total live submissions ever allowed (default 1)
+  LIVE_BUDGET_SCOPE?: string; // default production-live (RunningHub coins)
+  LIVE_COINS_5S?: string; // estimate per 5s H3 segment
+  LIVE_COINS_15S?: string;
+  LIVE_MAX_JOB_COINS?: string;
+  LIVE_TIMEOUT_SEC?: string;
+  ASSETS_BUCKET?: R2Bucket;
 }
 
 export type Line = "A" | "B" | "C" | "D";
@@ -56,6 +67,10 @@ export interface JobRow {
   updated_at: string;
   running_since: string | null;
   last_tx: string | null;
+  live_approval_ref?: string | null;
+  provider_meta_json?: string | null;
+  result_url?: string | null;
+  result_r2_key?: string | null;
 }
 
 export interface JobSpec {

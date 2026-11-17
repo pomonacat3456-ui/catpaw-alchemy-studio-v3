@@ -15,7 +15,7 @@ describe("health & auth", () => {
     const d: any = await r.json();
     expect(r.status).toBe(200);
     expect(d).toMatchObject({ ok: true, d1: "ok", mock: true, paid: false, published: false, live_providers: false, rebuild: "fresh-rebuild-not-zip-restore" });
-    expect(d.schema_version).toBe("0002_staging_fixtures.sql");
+    expect(d.schema_version).toBe("0003_canon_sync_and_live.sql");
   });
   it("API requires the admin key", async () => {
     expect((await api("GET", "/api/jobs", undefined, { "x-admin-key": "wrong" })).status).toBe(401);
@@ -154,10 +154,10 @@ describe("budget guard + atomic reservation", () => {
   });
   it("cancel releases the reservation", async () => {
     const { id } = await toRunning("A");
-    expect((await DB.prepare("SELECT reserved FROM budgets").first<any>()).reserved).toBe(4);
+    expect((await DB.prepare("SELECT reserved FROM budgets WHERE scope='staging-mock'").first<any>()).reserved).toBe(4);
     const c = await api("POST", `/api/jobs/${id}/cancel`, { reason: "test" });
     expect(c.data.job.state).toBe("cancelled");
-    expect((await DB.prepare("SELECT reserved FROM budgets").first<any>()).reserved).toBe(0);
+    expect((await DB.prepare("SELECT reserved FROM budgets WHERE scope='staging-mock'").first<any>()).reserved).toBe(0);
     expect((await api("POST", `/api/jobs/${id}/cancel`, {})).status).toBe(409);
   });
 });
@@ -176,7 +176,7 @@ describe("retry / timeout / failure recovery", () => {
         expect(cb.data.job.state).toBe("failed");
       }
     }
-    const b = await DB.prepare("SELECT reserved, spent FROM budgets").first<any>();
+    const b = await DB.prepare("SELECT reserved, spent FROM budgets WHERE scope='staging-mock'").first<any>();
     expect(b).toEqual({ reserved: 0, spent: 0 });
   });
   it("a failed attempt can recover and still deliver", async () => {
@@ -264,7 +264,7 @@ describe("state transition guards", () => {
     expect(rs.filter((r) => r.status === 200).length).toBe(1);
     const costs = await DB.prepare("SELECT kind FROM costs WHERE job_id = ? AND kind IN ('commit','release')").bind(id).all();
     expect(costs.results.length).toBe(1);
-    const b = await DB.prepare("SELECT reserved FROM budgets").first<any>();
+    const b = await DB.prepare("SELECT reserved FROM budgets WHERE scope='staging-mock'").first<any>();
     expect(b.reserved).toBe(0);
   });
   it("stale writer loses: transition from an outdated snapshot is 409 and writes no side effects", async () => {
@@ -281,7 +281,7 @@ describe("state transition guards", () => {
     expect(rel.n).toBe(0);
     const ev = await DB.prepare("SELECT COUNT(*) n FROM events WHERE job_id = ? AND to_state = 'cancelled'").bind(id).first<any>();
     expect(ev.n).toBe(0);
-    const b = await DB.prepare("SELECT reserved, spent FROM budgets").first<any>();
+    const b = await DB.prepare("SELECT reserved, spent FROM budgets WHERE scope='staging-mock'").first<any>();
     expect(b).toEqual({ reserved: 0, spent: 4 });
   });
   it("rejects malformed jobs with 400", async () => {

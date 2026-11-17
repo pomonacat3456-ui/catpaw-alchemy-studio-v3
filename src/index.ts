@@ -1,13 +1,15 @@
 import { HttpError, type Env, type JobRow } from "./types";
 import { hmacSha256Hex, timingSafeEqualStr, verifyCallbackSignature } from "./lib/crypto";
-import { LINES, parseSpec } from "./lib/validate";
+import { LINES, liveAllowed, parseSpec } from "./lib/validate";
+import { livePoll, providerBalance } from "./live";
+import { syncCanon } from "./canon";
 import { TRANSITIONS } from "./lib/states";
 import {
   cancel, createJob, deliver, enqueue, failOrRetry, getJob, handleCallback, logEvent, preflight, qa, run, sweepTimeouts,
   transition, view, type CallbackPayload,
 } from "./jobs";
 
-export const VERSION = "3.0.0-rebuild.1";
+export const VERSION = "3.0.0-rebuild.2";
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data, null, 2), {
@@ -56,12 +58,15 @@ async function health(env: Env) {
     rebuild: "fresh-rebuild-not-zip-restore",
     d1,
     schema_version: schema,
-    mock: true,
+    mock: !liveAllowed(env).allowed,
     paid: false,
     published: false,
-    live_providers: false,
+    live_providers: liveAllowed(env).allowed,
+    live_gate_reason: liveAllowed(env).reason ?? null,
+    live_max_submissions: Number(env.LIVE_MAX_SUBMISSIONS ?? 1),
     publish_gate: "closed",
-    secrets_configured: { admin_key: !!env.ADMIN_KEY, callback_hmac: !!env.CALLBACK_HMAC_SECRET },
+    r2_bound: !!env.ASSETS_BUCKET,
+    secrets_configured: { admin_key: !!env.ADMIN_KEY, callback_hmac: !!env.CALLBACK_HMAC_SECRET, provider_key: !!env.RUNNINGHUB_API_KEY },
     time: new Date().toISOString(),
   }, d1 === "ok" ? 200 : 503);
 }
@@ -94,8 +99,19 @@ async function route(req: Request, env: Env): Promise<Response> {
     return json({ version: VERSION, environment: env.ENVIRONMENT, lines: LINES, states: TRANSITIONS, mock: true, paid: false, published: false, rebuild: "fresh-rebuild-not-zip-restore" });
   if (p === "/api/budget" && m === "GET")
     return json({ unit: "mock-credit", paid: false, budgets: (await env.DB.prepare("SELECT * FROM budgets").all()).results });
-  if (p === "/api/canon" && m === "GET")
-    return json({ note: "staging fixtures, not the real CANON Sheet v3", characters: (await env.DB.prepare("SELECT * FROM canon_characters ORDER BY id").all()).results });
+  if (p === "/api/canon" && m === "GET") {
+    const rows = (await env.DB.prepare("SELECT * FROM canon_characters ORDER BY id").all<any>()).results;
+    const visible = env.ENVIRONMENT === "production" ? rows.filter((r) => r.source !== "staging-fixture") : rows;
+    return json({ note: "source=canon-sheet-v3 rows are synced read-only from the CANON Sheet; staging-fixture rows are test data", characters: visible });
+  }
+  if (p === "/api/admin/canon/sync" && m === "POST") return json(await syncCanon(env, await readJson(req)));
+  if (p === "/api/provider/balance" && m === "GET") return json({ provider: "runninghub", read_only: true, balance: await providerBalance(env) });
+  if (p.startsWith("/api/assets/r2/") && m === "GET") {
+    if (!env.ASSETS_BUCKET) throw new HttpError(404, "r2_not_bound");
+    const obj = await env.ASSETS_BUCKET.get(decodeURIComponent(p.slice("/api/assets/r2/".length)));
+    if (!obj) throw new HttpError(404, "asset_not_found");
+    return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "application/octet-stream", "cache-control": "no-store" } });
+  }
   if (p === "/api/admin/sweep" && m === "POST") return json({ swept: await sweepTimeouts(env) });
 
   if (p === "/api/jobs" && m === "GET") {
@@ -140,6 +156,21 @@ async function route(req: Request, env: Env): Promise<Response> {
       out = await failOrRetry(env, job, `review_rejected:${String(body?.reason ?? "").slice(0, 200)}`);
       break;
     case "deliver": out = await deliver(env, job); break;
+    case "live-approve": {
+      // Records the OWNER's per-job approval reference (who/when). Required before any live submit.
+      if (job.mode !== "live") throw new HttpError(409, "not_a_live_job");
+      if (!["draft", "blocked", "ready", "queued"].includes(job.state)) throw new HttpError(409, "live_approve_too_late", { state: job.state });
+      const ref = String(body?.approval_ref ?? "").trim();
+      if (ref.length < 8) throw new HttpError(400, "approval_ref_required");
+      await env.DB.prepare("UPDATE jobs SET live_approval_ref = ?, updated_at = ? WHERE id = ?").bind(ref.slice(0, 300), new Date().toISOString(), job.id).run();
+      await logEvent(env, job.id, "live_owner_approval_recorded", { approval_ref: ref.slice(0, 300) });
+      out = await getJob(env, job.id);
+      break;
+    }
+    case "poll": {
+      const r = await livePoll(env, job, { transition, failOrRetry });
+      return json({ status: r.status, job: await jobDetail(env, r.job) });
+    }
     case "cancel": out = await cancel(env, job, String(body?.reason ?? "admin_cancel").slice(0, 200)); break;
     case "publish": {
       // Separate publish gate. This build ships no publisher; generation success never publishes.
@@ -179,6 +210,12 @@ export default {
     }
   },
   async scheduled(_c: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(sweepTimeouts(env).then(() => undefined));
+    ctx.waitUntil((async () => {
+      if (env.RUNNINGHUB_API_KEY) {
+        const live = await env.DB.prepare("SELECT * FROM jobs WHERE mode = 'live' AND state = 'running' LIMIT 5").all<JobRow>();
+        for (const j of live.results) await livePoll(env, j, { transition, failOrRetry }).catch((e) => console.error("live poll", String(e)));
+      }
+      await sweepTimeouts(env);
+    })());
   },
 } satisfies ExportedHandler<Env>;

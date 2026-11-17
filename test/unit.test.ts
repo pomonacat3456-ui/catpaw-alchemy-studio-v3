@@ -98,10 +98,11 @@ describe("cost + provider adapters", () => {
     expect(liveAllowed({ ENVIRONMENT: "production", LIVE_PROVIDERS_ENABLED: "false", OWNER_LIVE_APPROVAL_ID: "x" } as any).allowed).toBe(false);
     expect(liveAllowed({ ENVIRONMENT: "production", LIVE_PROVIDERS_ENABLED: "true" } as any).allowed).toBe(false);
   });
-  it("live adapter fails closed (blocked in staging, not implemented even when enabled)", async () => {
-    const job: any = { id: "j", mode: "live" };
+  it("live adapter fails closed (blocked in staging; in production still needs a per-job owner approval)", async () => {
+    const job: any = { id: "j", mode: "live", line: "A", provider: "runninghub-h3" };
     await expect(new LiveAdapter("runninghub-h3", { ENVIRONMENT: "staging", LIVE_PROVIDERS_ENABLED: "true", OWNER_LIVE_APPROVAL_ID: "x" } as any).submit(job, 1)).rejects.toThrow("live_provider_blocked");
-    await expect(new LiveAdapter("runninghub-h3", { ENVIRONMENT: "production", LIVE_PROVIDERS_ENABLED: "true", OWNER_LIVE_APPROVAL_ID: "x" } as any).submit(job, 1)).rejects.toThrow("live_provider_not_implemented");
+    await expect(new LiveAdapter("runninghub-h3", { ENVIRONMENT: "production", LIVE_PROVIDERS_ENABLED: "false", OWNER_LIVE_APPROVAL_ID: "x" } as any).submit(job, 1)).rejects.toThrow("live_provider_blocked");
+    await expect(new LiveAdapter("runninghub-h3", { ENVIRONMENT: "production", LIVE_PROVIDERS_ENABLED: "true", OWNER_LIVE_APPROVAL_ID: "x" } as any).submit(job, 1)).rejects.toThrow("live_job_not_owner_approved");
   });
   it("mock adapter does no I/O and returns deterministic task id", async () => {
     expect((await new MockAdapter("pixverse").submit({ id: "j1" } as any, 2)).providerTaskId).toBe("mock-pixverse-j1-a2");

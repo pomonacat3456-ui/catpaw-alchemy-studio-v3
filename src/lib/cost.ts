@@ -1,14 +1,24 @@
-import type { JobSpec } from "../types";
+import type { Env, JobSpec } from "../types";
 
 /**
- * Mock credit estimate (staging-only accounting unit, NOT real money).
- * 5s segment = 1 credit (cheap test), 15s segment = 3 credits (formal),
- * B line image = 1 credit each, C line music track +2.
+ * MOCK jobs: staging/prod accounting unit "mock-credit" (NOT money).
+ *   5s segment = 1, 15s segment = 3, B image = 1 each, C music track +2.
+ * LIVE jobs: RunningHub coins (prepaid provider credits) estimate per H3 segment,
+ *   defaults from observed past H3 runs (~322 coins / 5s, ~900 / 15s), rounded up.
  */
-export function estimateCredits(spec: JobSpec): number {
+export function estimateCredits(spec: JobSpec, env?: Partial<Env>): number {
+  if (spec.mode === "live") {
+    const c5 = Number(env?.LIVE_COINS_5S || 350);
+    const c15 = Number(env?.LIVE_COINS_15S || 950);
+    return spec.segments.reduce((a, s) => a + (s === 15 ? c15 : c5), 0);
+  }
   if (spec.line === "B") return spec.images;
   let c = 0;
   for (const s of spec.segments) c += s === 15 ? 3 : 1;
   if (spec.line === "C") c += 2;
   return c;
+}
+
+export function creditUnit(mode: string) {
+  return mode === "live" ? "runninghub-coin" : "mock-credit";
 }

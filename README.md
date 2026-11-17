@@ -41,7 +41,7 @@ npm run db:migrate:staging
 npx wrangler deploy
 tr -d '\n' < /path/to/admin_key | npx wrangler secret put ADMIN_KEY
 tr -d '\n' < /path/to/hmac      | npx wrangler secret put CALLBACK_HMAC_SECRET
-BASE=https://catpaw-alchemy-v3-staging.<subdomain>.workers.dev scripts/verify-staging.sh
+BASE=https://catpaw-alchemy-v3-staging.<subdomain>.workers.dev scripts/verify.sh
 ```
 機密只放 Cloudflare secrets 與本機 mode 600 檔案，不進 repo。範本見 `.dev.vars.example`。
 
@@ -50,7 +50,24 @@ BASE=https://catpaw-alchemy-v3-staging.<subdomain>.workers.dev scripts/verify-st
 `POST /api/jobs/:id/{preflight,enqueue,run,qa,approve,reject,deliver,cancel,publish,mock/callback}` ·
 `POST /api/callbacks/:provider`（HMAC） · `POST /api/admin/sweep`
 
+## Production（2026-11-17 起）
+- Worker `catpaw-alchemy-v3` + D1 `catpaw-alchemy-v3` + R2 `catpaw-alchemy-v3-assets`：`npx wrangler deploy --env production`（只用 workers.dev）。
+- Staging（`catpaw-alchemy-v3-staging`）保持原樣當備援；若要重新部署 staging，須先 `npm run db:migrate:staging` 套用 0003。
+- 測試夾具已移到 `seed/staging-fixtures.sql`，production D1 不含任何夾具（0002 現為空 migration）。
+
+## CANON 同步（唯讀）
+1. 用 Drive connector 唯讀取得 Sheet `1qvEJtoNPUjzBmwbpNQ09PJCc9MChvLx20JS8lDGJuuY` 的文字匯出，存到 `canon-sync/raw/`（gitignored）。
+2. `scripts/canon-sync.py <export.txt> --post <BASE> --admin-key-file <file>` → `POST /api/admin/canon/sync`。
+3. 核准由 Worker 判斷（`src/canon.ts`，fail-closed）：
+   - **mock 可用**：母喵 + `CANON_LOCKED` + 圖片素材 `approved=TRUE` 且有 https 網址的 CHARACTER_MASTER。
+   - **live 可用**：以上全部 + Master總控「製片准入」為開放值（可製片/准許製片/允許製片/開放製片/放行）+ 外部模型可讀 + 直接圖片網址（非 Drive 檢視頁）。
+   - 每列記錄 sheet_id / 分頁 / 列號 / synced_at / 不核准原因；下次同步缺席的列自動撤銷核准。
+
+## Live provider（RunningHub MiniMax H3，預設關閉）
+送出順序：環境=production、`LIVE_PROVIDERS_ENABLED=true`、`OWNER_LIVE_APPROVAL_ID`、該任務 `live-approve`（owner 核准紀錄）、CANON live 核准、
+全域上限 `LIVE_MAX_SUBMISSIONS`（預設 1，原子佔位）、`RUNNINGHUB_API_KEY`、**餘額查詢 ≥ 預估**、Master 圖可讀 → 上傳 → **唯一一次付費 create** →
+cron/`POST /api/jobs/:id/poll` 輪詢 → 結果下載到 R2 → QA。live 任務不自動重試；餘額前後、consumeCoins、task id 皆寫入 `provider_meta`。
+
 ## 尚未完成（需設定或 owner 核准）
-- CANON 角色目前是 **staging 測試夾具**（`.invalid` 網址），尚未接 CANON Google Sheet v3。
-- RunningHub H3 / PixVerse live adapter、n8n、Drive/R2 素材、YouTube/Threads 發布器：皆未實作，需 P4 PR + owner 核准單筆實測。
+- PixVerse live adapter、n8n、YouTube/Threads 發布器：未實作。RunningHub H3 已實作但 production 預設關閉。
 - 正式網站/正式 Worker 切換、任何付費：須 owner 明確核准。
