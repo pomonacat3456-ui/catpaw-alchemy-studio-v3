@@ -31,7 +31,7 @@ export interface Env {
   PIXVERSE_BASE_URL?: string; // default https://app-api.pixverse.ai/openapi/v2
   PIXVERSE_MODEL?: string; // default v6-max
   PIXVERSE_QUALITY?: string; // default 540p
-  LIVE_PIXVERSE_CREDITS_5S?: string; // estimate (v6-max 540p ~7 credits/s, audio off)
+  LIVE_PIXVERSE_CREDITS_5S?: string; // estimate (v6-max 540p 5s audio off = 45 credits, observed 2026-11-17)
   LIVE_PIXVERSE_CREDITS_15S?: string;
   LIVE_PIXVERSE_MAX_CREDITS?: string; // hard cap reported by the provider per job
 }

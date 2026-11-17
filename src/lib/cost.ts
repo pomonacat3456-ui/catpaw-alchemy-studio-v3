@@ -8,8 +8,8 @@ import type { Env, JobSpec } from "../types";
  */
 export function estimateCredits(spec: JobSpec, env?: Partial<Env>): number {
   if (spec.mode === "live" && spec.provider === "pixverse") {
-    const c5 = Number(env?.LIVE_PIXVERSE_CREDITS_5S || 35);
-    const c15 = Number(env?.LIVE_PIXVERSE_CREDITS_15S || 105);
+    const c5 = Number(env?.LIVE_PIXVERSE_CREDITS_5S || 45);
+    const c15 = Number(env?.LIVE_PIXVERSE_CREDITS_15S || 135);
     return spec.segments.reduce((a, s) => a + (s === 15 ? c15 : c5), 0);
   }
   if (spec.mode === "live") {

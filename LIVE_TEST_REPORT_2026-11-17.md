@@ -40,3 +40,18 @@
 - 程式：NORMAL key 的餘額檢查改用 `remainPoint`（LIVE_POINTS_5S 預設 60）；API 若不回 remainPoint 則 fail-closed，除非 owner 提供 `LIVE_MANUAL_POINTS_BALANCE`。完成時記錄 chargedPoint / point_delta。
 - PixVerse：RunningHub 有 `POST /openapi/v2/pixverse-v6/image-to-video`（標準模型 API），但官方文件明定「模型 API 僅支援企業級-共享 API Key」（錯誤碼 1014），計費走錢包；本 key 為 NORMAL、錢包 $0 → 不可用。PixVerse 原生 OpenAPI 需要 PIXVERSE_API_KEY（box 上沒有）。已實作原生 adapter（mock 測試），未送出任何 PixVerse 任務。
 - A 線 prompt builder a-line-v2：貓掌肉球、貓臉、全母喵、布袋戲偶材質、端莊服裝，negative prompt 獨立欄位。
+
+## PixVerse 單次測試（14:07 owner 授權，時間 Asia/Taipei）
+- 部署 cee74e3 → version 7f91f238（live false）；PIXVERSE_API_KEY 以 production secret 設定。
+- 單次覆寫 `ovr-d5c1c7b1-…`（approver `owner 2026-11-17 14:07`），已於送出前消耗（used_count=1）。
+- jobId `cpa3-A-20261117-a24722d2ed`，PixVerse video_id `435760615055773`；v6-max、540p、5s、9:16、無音訊；prompt builder a-line-v2（含 negative_prompt）。
+- 14:14:51 送出 → 14:16:21 完成；14:15:13 已關 live（/health live_providers:false），OWNER_LIVE_APPROVAL_ID 已刪除。
+- PixVerse 點數：送出前 570 → 完成後 525，實扣 45（API 回報 45；估算 35 偏低，預設已改為 45）。D1 provider_charge=45，scope pixverse-credits。
+- 輸出：592x1024（≈9:16）h264 24fps 5.04s、無音軌；R2 `live/cpa3-A-20261117-a24722d2ed/435760615055773.mp4`。
+
+### QA（6 格 1.2fps，人工目視）：FAIL
+- ✅ 後半（f_04–f_06）：正面抬起「真貓掌＋粉色肉球」、貓臉（貓鼻、鬍鬚、尖耳）明顯改善、火焰環、無實體武器、單一母喵、王冠/赤髮/黑金赤紅袍與 Master 一致。
+- ❌ 前半（f_01–f_03）沿用 Master 起始姿勢：擬人手指＋紅色長指甲（f_01、f_03），f_04–f_06 肉球上仍有紅色尖爪。
+- ❌ 服裝不端莊：f_01 明顯乳溝、f_01/f_03 高衩露腿。
+- ❌ 質感偏數位繪畫／動漫，非布袋戲偶。
+- 根因：image-to-video 以 Master 為第一幀，Master 本身即擬人手、低胸高衩；prompt 只能改善後段動作。要通過需先產出符合規範的新 Master（貓掌、端莊服裝、偶質感）。

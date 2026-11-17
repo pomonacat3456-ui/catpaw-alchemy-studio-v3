@@ -76,7 +76,7 @@ describe("PixVerse native live adapter (mocked fetch)", () => {
     let job = await pixQueued(e);
     expect(job.state).toBe("queued");
     expect(job.provider).toBe("pixverse");
-    expect(job.estimated_credits).toBe(35);
+    expect(job.estimated_credits).toBe(45);
     job = await run(e, job);
     expect(job.state).toBe("running");
     expect(job.provider_task_id).toBe("432658773528999");
