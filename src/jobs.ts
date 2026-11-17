@@ -47,7 +47,7 @@ export function view(job: JobRow) {
     aspect: job.aspect,
     spec: JSON.parse(job.spec_json),
     idempotency_key: job.idempotency_key,
-    credits: { estimated: job.estimated_credits, reserved: job.reserved_credits, spent: job.spent_credits, unit: creditUnit(job.mode) },
+    credits: { estimated: job.estimated_credits, reserved: job.reserved_credits, spent: job.spent_credits, unit: creditUnit(job.mode, job.provider) },
     live_approval_ref: job.live_approval_ref ?? null,
     provider_meta: job.provider_meta_json ? JSON.parse(job.provider_meta_json) : null,
     result_url: job.result_url ?? null,
@@ -117,7 +117,7 @@ export async function createJob(env: Env, spec: JobSpec): Promise<{ job: JobRow;
     `INSERT OR IGNORE INTO jobs (id, idempotency_key, line, mode, provider, state, character_id, master_url, aspect, spec_json,
        estimated_credits, max_attempts, created_at, updated_at)
      VALUES (?,?,?,?,?,'draft',?,?,?,?,?,?,?,?)`,
-  ).bind(id, key, spec.line, spec.mode, providerForLine(spec.line), spec.protagonist, spec.master_url ?? null, spec.aspect,
+  ).bind(id, key, spec.line, spec.mode, spec.provider ?? providerForLine(spec.line), spec.protagonist, spec.master_url ?? null, spec.aspect,
     JSON.stringify(spec), estimateCredits(spec, env), maxAttempts(env, spec.mode), now, now).run();
   if (ins.meta.changes) {
     const steps: D1PreparedStatement[] = [];

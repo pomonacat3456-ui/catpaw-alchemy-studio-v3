@@ -7,6 +7,11 @@ import type { Env, JobSpec } from "../types";
  *   defaults from observed past H3 runs (~322 coins / 5s, ~900 / 15s), rounded up.
  */
 export function estimateCredits(spec: JobSpec, env?: Partial<Env>): number {
+  if (spec.mode === "live" && spec.provider === "pixverse") {
+    const c5 = Number(env?.LIVE_PIXVERSE_CREDITS_5S || 35);
+    const c15 = Number(env?.LIVE_PIXVERSE_CREDITS_15S || 105);
+    return spec.segments.reduce((a, s) => a + (s === 15 ? c15 : c5), 0);
+  }
   if (spec.mode === "live") {
     const c5 = Number(env?.LIVE_COINS_5S || 350);
     const c15 = Number(env?.LIVE_COINS_15S || 950);
@@ -19,6 +24,7 @@ export function estimateCredits(spec: JobSpec, env?: Partial<Env>): number {
   return c;
 }
 
-export function creditUnit(mode: string) {
+export function creditUnit(mode: string, provider?: string) {
+  if (mode === "live" && provider === "pixverse") return "pixverse-credit";
   return mode === "live" ? "runninghub-coin" : "mock-credit";
 }

@@ -1,5 +1,6 @@
 import { HttpError, type Env, type JobRow, type JobSpec } from "./types";
-import { liveAllowed } from "./lib/validate";
+import { LIVE_PROVIDERS_LINE_A, liveAllowed } from "./lib/validate";
+import { PixVerseClient, pixGeneratePayload, type PixBalance } from "./providers/pixverse";
 import { DEFAULT_H3_WORKFLOW_ID, ProviderError, RunningHubClient, h3NodeInfo, providerDeps, type Balance } from "./providers/runninghub";
 
 const MAX_MASTER_BYTES = 30 * 1024 * 1024;
@@ -21,19 +22,68 @@ async function logEv(env: Env, jobId: string, type: string, detail: unknown) {
 }
 
 /** Free, read-only balance query. */
-export async function providerBalance(env: Env): Promise<Balance> {
-  try { return await rhClient(env).accountStatus(); } catch (e) { asHttp(e); }
+export async function providerBalance(env: Env, provider = "runninghub"): Promise<Balance | PixBalance> {
+  try { return provider === PIX ? await pixClient(env).balance() : await rhClient(env).accountStatus(); } catch (e) { asHttp(e); }
+}
+
+const PIX = "pixverse";
+
+/**
+ * RunningHub has TWO prepaid pools on one account (accountStatus):
+ *   remainPoint = plan 點數 (NORMAL / consumer-member keys settle workflow tasks here: usage.settleMode "POINT", chargedPoint)
+ *   remainCoins = RH幣 (separate pool), remainMoney = wallet (Enterprise-Shared keys only).
+ * Observed 2026-11-17: H3 5s task charged 54.23 點數, 0 RH幣, $0.
+ * For NORMAL keys the points pool must cover LIVE_POINTS_5S/15S; if the API returns no remainPoint we fail closed
+ * unless the owner supplied a manual balance (LIVE_MANUAL_POINTS_BALANCE).
+ */
+export function rhBalanceCheck(env: Env, b: Balance, segments: number[]) {
+  const p5 = Number(env.LIVE_POINTS_5S || 60), p15 = Number(env.LIVE_POINTS_15S || 180);
+  const neededPoints = segments.reduce((a, s) => a + (s === 15 ? p15 : p5), 0);
+  if (b.apiType && b.apiType !== "NORMAL") {
+    const neededCoins = segments.reduce((a, s) => a + (s === 15 ? Number(env.LIVE_COINS_15S || 950) : Number(env.LIVE_COINS_5S || 350)), 0);
+    return { ok: b.remainCoins >= neededCoins, pool: "coins", remainCoins: b.remainCoins, needed: neededCoins, apiType: b.apiType };
+  }
+  let points = b.remainPoint ?? null, source = "api.remainPoint";
+  if (points == null && env.LIVE_MANUAL_POINTS_BALANCE) { points = Number(env.LIVE_MANUAL_POINTS_BALANCE); source = "owner_manual"; }
+  if (points == null || !Number.isFinite(points)) return { ok: false, pool: "points", reason: "points_balance_unavailable_owner_must_provide", needed: neededPoints };
+  return { ok: points >= neededPoints, pool: "points", remainPoint: points, source, needed: neededPoints, apiType: b.apiType ?? null };
+}
+
+export function pixClient(env: Env): PixVerseClient {
+  if (!env.PIXVERSE_API_KEY) throw new HttpError(503, "provider_key_missing", { provider: PIX, note: "PIXVERSE_API_KEY secret not set" });
+  return new PixVerseClient(env.PIXVERSE_API_KEY, env.PIXVERSE_BASE_URL || undefined);
+}
+
+/** Master bytes: our own public CANON path is read from R2 (a Worker cannot fetch its own workers.dev host). */
+async function readMaster(env: Env, job: JobRow): Promise<{ bytes: ArrayBuffer; ct: string }> {
+  if (!/^https:\/\//.test(job.master_url ?? "")) throw new HttpError(422, "master_url_not_https");
+  const own = env.PUBLIC_ORIGIN ? `${env.PUBLIC_ORIGIN.replace(/\/$/, "")}/public/canon/` : "";
+  let ct: string, bytes: ArrayBuffer;
+  if (own && job.master_url!.startsWith(own) && /^[A-Za-z0-9_.-]+\.(png|jpe?g|webp)$/.test(job.master_url!.slice(own.length))) {
+    const obj = await env.ASSETS_BUCKET?.get(`public/canon/${job.master_url!.slice(own.length)}`);
+    ct = obj?.httpMetadata?.contentType ?? "";
+    if (!obj || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { source: "r2-public", content_type: ct.slice(0, 60) });
+    bytes = await obj.arrayBuffer();
+  } else {
+    const img = await providerDeps.fetch(job.master_url!, { redirect: "follow" });
+    ct = img.headers.get("content-type") ?? "";
+    if (!img.ok || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { status: img.status, content_type: ct.slice(0, 60) });
+    bytes = await img.arrayBuffer();
+  }
+  if (bytes.byteLength < 1024 || bytes.byteLength > MAX_MASTER_BYTES) throw new HttpError(422, "master_image_bad_size", { bytes: bytes.byteLength });
+  return { bytes, ct };
 }
 
 /**
- * Gate + submit ONE live RunningHub H3 task. Called only from run() for mode=live jobs in state queued.
- * Ordering matters: every free check happens before the single paid call (createTask).
+ * Gate + submit ONE live task (RunningHub H3 workflow, or PixVerse native image-to-video).
+ * Called only from run() for mode=live jobs in state queued.
+ * Ordering matters: every free check happens before the single paid call.
  */
 export async function liveSubmit(env: Env, job: JobRow) {
   const gate = liveAllowed(env);
   if (!gate.allowed) throw new HttpError(403, "live_provider_blocked", { reason: gate.reason, provider: job.provider });
   if (!job.live_approval_ref) throw new HttpError(403, "live_job_not_owner_approved");
-  if (job.provider !== "runninghub-h3" || job.line !== "A") throw new HttpError(403, "live_only_runninghub_h3_line_A");
+  if (job.line !== "A" || !LIVE_PROVIDERS_LINE_A.includes(job.provider)) throw new HttpError(403, "live_only_line_A_wired_providers", { provider: job.provider });
   const spec = JSON.parse(job.spec_json) as JobSpec;
   const canon = await env.DB.prepare("SELECT * FROM canon_characters WHERE id = ?").bind(job.character_id).first<any>();
   const override = await env.DB.prepare(
@@ -42,49 +92,46 @@ export async function liveSubmit(env: Env, job: JobRow) {
   const sheetApproved = canon?.approved === 1 && canon.master_url === job.master_url;
   if (!canon || canon.sex !== "female" || canon.source === "staging-fixture" || (!sheetApproved && !override))
     throw new HttpError(403, "canon_not_live_approved", { character: job.character_id });
-  const client = rhClient(env);
+  const isPix = job.provider === PIX;
+  const rh = isPix ? null : rhClient(env);
+  const pix = isPix ? pixClient(env) : null;
 
-  // Global cap: claim a live submission slot atomically (counts every claim, including failed paid calls).
+  // Cap: claim a live submission slot atomically, PER PROVIDER (counts every claim, including failed paid calls).
   const cap = Math.max(0, Number(env.LIVE_MAX_SUBMISSIONS ?? 1));
   const claimTag = `claim:${job.id}:${crypto.randomUUID()}`;
   const claim = await env.DB.prepare(
     `UPDATE jobs SET provider_task_id = ? WHERE id = ? AND state = 'queued' AND mode = 'live'
-       AND (SELECT COUNT(*) FROM jobs WHERE mode = 'live' AND provider_task_id IS NOT NULL) < ?`,
-  ).bind(claimTag, job.id, cap).run();
-  if (!claim.meta.changes) throw new HttpError(403, "live_submission_cap_reached", { cap });
+       AND (SELECT COUNT(*) FROM jobs WHERE mode = 'live' AND provider = ? AND provider_task_id IS NOT NULL) < ?`,
+  ).bind(claimTag, job.id, job.provider, cap).run();
+  if (!claim.meta.changes) throw new HttpError(403, "live_submission_cap_reached", { cap, provider: job.provider });
   const unclaim = () => env.DB.prepare("UPDATE jobs SET provider_task_id = NULL WHERE id = ? AND provider_task_id = ?").bind(job.id, claimTag).run();
 
-  let balanceBefore: Balance, fileName: string;
+  let balanceBefore: Balance | PixBalance, uploaded: string | number;
   try {
-    balanceBefore = await client.accountStatus();
-    if (balanceBefore.remainCoins < job.estimated_credits) {
-      await logEv(env, job.id, "provider_balance_insufficient", { remainCoins: balanceBefore.remainCoins, needed: job.estimated_credits });
-      throw new HttpError(402, "provider_balance_insufficient", { remainCoins: balanceBefore.remainCoins, needed: job.estimated_credits, note: "no top-up attempted" });
-    }
-    if (!/^https:\/\//.test(job.master_url ?? "")) throw new HttpError(422, "master_url_not_https");
-    // A Worker cannot fetch its own workers.dev hostname (404), so our own public CANON path is read from R2 directly.
-    const own = env.PUBLIC_ORIGIN ? `${env.PUBLIC_ORIGIN.replace(/\/$/, "")}/public/canon/` : "";
-    let ct: string, bytes: ArrayBuffer;
-    if (own && job.master_url!.startsWith(own) && /^[A-Za-z0-9_.-]+\.(png|jpe?g|webp)$/.test(job.master_url!.slice(own.length))) {
-      const obj = await env.ASSETS_BUCKET?.get(`public/canon/${job.master_url!.slice(own.length)}`);
-      ct = obj?.httpMetadata?.contentType ?? "";
-      if (!obj || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { source: "r2-public", content_type: ct.slice(0, 60) });
-      bytes = await obj.arrayBuffer();
+    if (pix) {
+      const b = await pix.balance();
+      balanceBefore = b;
+      if (b.credits < job.estimated_credits) {
+        await logEv(env, job.id, "provider_balance_insufficient", { provider: PIX, credits: b.credits, needed: job.estimated_credits });
+        throw new HttpError(402, "provider_balance_insufficient", { provider: PIX, credits: b.credits, needed: job.estimated_credits, note: "no top-up attempted" });
+      }
     } else {
-      const img = await providerDeps.fetch(job.master_url!, { redirect: "follow" });
-      ct = img.headers.get("content-type") ?? "";
-      if (!img.ok || !ct.startsWith("image/")) throw new HttpError(422, "master_image_unreadable", { status: img.status, content_type: ct.slice(0, 60) });
-      bytes = await img.arrayBuffer();
+      const b = await rh!.accountStatus();
+      balanceBefore = b;
+      const chk = rhBalanceCheck(env, b, spec.segments);
+      if (!chk.ok) {
+        await logEv(env, job.id, "provider_balance_insufficient", chk);
+        throw new HttpError(402, "provider_balance_insufficient", { ...chk, note: "no top-up attempted" });
+      }
     }
-    if (bytes.byteLength < 1024 || bytes.byteLength > MAX_MASTER_BYTES) throw new HttpError(422, "master_image_bad_size", { bytes: bytes.byteLength });
-    fileName = await client.upload(bytes, `${job.character_id}.${ct.includes("png") ? "png" : "jpg"}`);
+    const { bytes, ct } = await readMaster(env, job);
+    const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
+    uploaded = pix ? await pix.upload(bytes, `${job.character_id}.${ext}`, ct) : await rh!.upload(bytes, `${job.character_id}.${ext}`);
   } catch (e) {
     await unclaim(); // nothing paid was sent; slot released
     asHttp(e);
   }
 
-  const workflowId = env.RUNNINGHUB_H3_WORKFLOW_ID || DEFAULT_H3_WORKFLOW_ID;
-  const nodes = h3NodeInfo(fileName!, spec.prompt, spec.segments[0]);
   if (!sheetApproved && override) {
     // Consume the single-use override atomically right before the paid call (auto-expires after use).
     const used = await env.DB.prepare(
@@ -92,21 +139,31 @@ export async function liveSubmit(env: Env, job: JobRow) {
     ).bind(new Date().toISOString(), override.id, job.id).run();
     if (!used.meta.changes) { await unclaim(); throw new HttpError(403, "canon_override_already_used"); }
   }
-  let taskId: string;
+  const common = { balance_before: balanceBefore!, submitted_at: "", owner_approval: job.live_approval_ref,
+    canon_override: override ? { id: override.id, approver: override.approver } : null, prompt_builder: spec.prompt_builder ?? null };
+  let taskId: string, extraMeta: Record<string, unknown>;
   try {
-    taskId = await client.createTask(workflowId, nodes); // PAID
+    if (pix) {
+      const payload = pixGeneratePayload({ imgId: Number(uploaded!), prompt: spec.prompt, negative: spec.negative_prompt, seconds: spec.segments[0],
+        model: env.PIXVERSE_MODEL, quality: env.PIXVERSE_QUALITY });
+      const g = await pix.generate(payload); // PAID
+      taskId = g.videoId;
+      const hard = Number(env.LIVE_PIXVERSE_MAX_CREDITS || 60);
+      extraMeta = { provider: PIX, model: payload.model, quality: payload.quality, duration: payload.duration, img_id: payload.img_id,
+        credits_reported_at_submit: g.credits, credits_over_hard_cap: g.credits != null && g.credits > hard };
+      if (g.credits != null && g.credits > hard) await logEv(env, job.id, "provider_credits_over_hard_cap", { credits: g.credits, hard_cap: hard });
+    } else {
+      const workflowId = env.RUNNINGHUB_H3_WORKFLOW_ID || DEFAULT_H3_WORKFLOW_ID;
+      taskId = await rh!.createTask(workflowId, h3NodeInfo(String(uploaded!), spec.prompt, spec.segments[0])); // PAID
+      extraMeta = { provider: "runninghub-h3", workflow_id: workflowId, uploaded_file: uploaded! };
+    }
   } catch (e) {
     // Keep the claim (counts toward the cap): we cannot prove nothing was charged.
     await env.DB.prepare("UPDATE jobs SET provider_task_id = ? WHERE id = ?").bind(`create-failed:${job.id}`, job.id).run();
-    await logEv(env, job.id, "provider_create_failed", { error: e instanceof ProviderError ? { code: e.code, detail: e.detail } : String(e), balance_before: balanceBefore! });
+    await logEv(env, job.id, "provider_create_failed", { provider: job.provider, error: e instanceof ProviderError ? { code: e.code, detail: e.detail } : String(e), balance_before: balanceBefore! });
     asHttp(e);
   }
-  return {
-    providerTaskId: taskId!,
-    mock: false,
-    meta: { provider: "runninghub-h3", workflow_id: workflowId, uploaded_file: fileName!, balance_before: balanceBefore!, submitted_at: new Date().toISOString(),
-      owner_approval: job.live_approval_ref, canon_override: override ? { id: override.id, approver: override.approver } : null },
-  };
+  return { providerTaskId: taskId!, mock: false, meta: { ...extraMeta!, ...common, submitted_at: new Date().toISOString() } };
 }
 
 /**
@@ -118,6 +175,7 @@ export async function livePoll(env: Env, job: JobRow, deps: {
   failOrRetry: (env: Env, job: JobRow, err: string) => Promise<JobRow>;
 }): Promise<{ job: JobRow; status: string }> {
   if (job.mode !== "live" || job.state !== "running" || !job.provider_task_id) throw new HttpError(409, "not_a_running_live_job");
+  if (job.provider === PIX) return pixPoll(env, job, deps);
   const client = rhClient(env);
   let out;
   try { out = await client.outputs(job.provider_task_id); } catch (e) { asHttp(e); }
@@ -138,28 +196,84 @@ export async function livePoll(env: Env, job: JobRow, deps: {
   const ok = out as Extract<typeof out, { status: "succeeded" }>;
   meta.consume_coins = ok.consumeCoins;
   meta.task_cost_time = ok.taskCostTime;
+  meta.settle_mode = ok.settleMode ?? null; // "POINT" = charged to the plan 點數 pool, not RH幣
+  meta.charged_point = ok.chargedPoint ?? null;
+  meta.consume_money = ok.consumeMoney ?? null;
   if ("remainCoins" in balanceAfter && meta.balance_before?.remainCoins != null)
     meta.balance_delta = meta.balance_before.remainCoins - balanceAfter.remainCoins;
+  if ("remainCoins" in balanceAfter && balanceAfter.remainPoint != null && meta.balance_before?.remainPoint != null)
+    meta.point_delta = Math.round((meta.balance_before.remainPoint - balanceAfter.remainPoint) * 100) / 100;
   let r2Key: string | null = null;
   const dl = await providerDeps.fetch(ok.fileUrl);
   if (dl.ok && env.ASSETS_BUCKET) {
     r2Key = `live/${job.id}/${job.provider_task_id}.${ok.fileType || "mp4"}`;
     await env.ASSETS_BUCKET.put(r2Key, dl.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { jobId: job.id, taskId: job.provider_task_id } });
   } else if (!dl.ok) meta.download_error = dl.status;
-  const coins = ok.consumeCoins ?? job.reserved_credits;
+  // POINT settlement: record the exact 點數 charged (REAL) under runninghub_points; else RH幣 coins.
+  const isPoint = ok.settleMode === "POINT";
+  const coins = isPoint ? (ok.chargedPoint ?? meta.point_delta ?? job.reserved_credits) : (ok.consumeCoins ?? job.reserved_credits);
+  const chargeScope = isPoint ? "runninghub_points" : "runninghub-coins";
   const now = new Date().toISOString();
   const extra = (tx: string) => [
     env.DB.prepare(`INSERT OR IGNORE INTO assets (id, job_id, step_idx, version, kind, url, provider_task_id, mock, created_at)
       SELECT ?,?,?,?,?,?,?,0,? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
       .bind(crypto.randomUUID(), job.id, 0, job.attempts, "segment", r2Key ? `r2://${r2Key}` : ok.fileUrl, job.provider_task_id, now, job.id, tx),
     env.DB.prepare(`INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at)
-      SELECT ?, ?, 'provider_charge', ?, 'runninghub-coins', 1, ?, ? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
-      .bind(crypto.randomUUID(), job.id, coins, tx, now, job.id, tx),
+      SELECT ?, ?, 'provider_charge', ?, ?, 1, ?, ? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
+      .bind(crypto.randomUUID(), job.id, coins, chargeScope, tx, now, job.id, tx),
     env.DB.prepare(`UPDATE steps SET state = 'generated', updated_at = ? WHERE job_id = ? AND EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
       .bind(now, job.id, job.id, tx),
   ];
   const next = await deps.transition(env, job, "qa",
     { running_since: null, result_url: ok.fileUrl, result_r2_key: r2Key, provider_meta_json: JSON.stringify(meta) },
     { provider_task_id: job.provider_task_id, consume_coins: ok.consumeCoins, r2_key: r2Key }, extra);
+  return { job: next, status: "succeeded" };
+}
+
+type PollDeps = Parameters<typeof livePoll>[2];
+
+async function pixPoll(env: Env, job: JobRow, deps: PollDeps): Promise<{ job: JobRow; status: string }> {
+  const pix = pixClient(env);
+  let out;
+  try { out = await pix.result(job.provider_task_id!); } catch (e) { asHttp(e); }
+  if (out!.status === "running") {
+    await logEv(env, job.id, "live_poll", { provider: PIX, code: (out as any).code });
+    return { job, status: "running" };
+  }
+  const meta = job.provider_meta_json ? JSON.parse(job.provider_meta_json) : {};
+  let after: PixBalance | { error: string };
+  try { after = await pix.balance(); } catch { after = { error: "balance_unavailable" }; }
+  meta.balance_after = after;
+  if ("credits" in after && meta.balance_before?.credits != null) meta.balance_delta = meta.balance_before.credits - after.credits;
+  if (out!.status === "failed") {
+    meta.provider_failure = (out as any).reason;
+    await env.DB.prepare("UPDATE jobs SET provider_meta_json = ? WHERE id = ?").bind(JSON.stringify(meta), job.id).run();
+    const fresh = await env.DB.prepare("SELECT * FROM jobs WHERE id = ?").bind(job.id).first<JobRow>();
+    return { job: await deps.failOrRetry(env, fresh!, `provider_failed:${(out as any).reason}`), status: "failed" };
+  }
+  const ok = out as Extract<typeof out, { status: "succeeded" }>;
+  meta.credits = ok.credits ?? meta.credits_reported_at_submit ?? null;
+  meta.output = { width: ok.width, height: ok.height, seed: ok.seed };
+  let r2Key: string | null = null;
+  const dl = await providerDeps.fetch(ok.fileUrl);
+  if (dl.ok && env.ASSETS_BUCKET) {
+    r2Key = `live/${job.id}/${job.provider_task_id}.mp4`;
+    await env.ASSETS_BUCKET.put(r2Key, dl.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { jobId: job.id, taskId: job.provider_task_id!, provider: PIX } });
+  } else if (!dl.ok) meta.download_error = dl.status;
+  const credits = meta.credits ?? meta.balance_delta ?? job.reserved_credits;
+  const now = new Date().toISOString();
+  const extra = (tx: string) => [
+    env.DB.prepare(`INSERT OR IGNORE INTO assets (id, job_id, step_idx, version, kind, url, provider_task_id, mock, created_at)
+      SELECT ?,?,?,?,?,?,?,0,? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
+      .bind(crypto.randomUUID(), job.id, 0, job.attempts, "segment", r2Key ? `r2://${r2Key}` : ok.fileUrl, job.provider_task_id, now, job.id, tx),
+    env.DB.prepare(`INSERT OR IGNORE INTO costs (id, job_id, kind, credits, scope, paid, batch_token, created_at)
+      SELECT ?, ?, 'provider_charge', ?, 'pixverse-credits', 1, ?, ? WHERE EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
+      .bind(crypto.randomUUID(), job.id, credits, tx, now, job.id, tx),
+    env.DB.prepare(`UPDATE steps SET state = 'generated', updated_at = ? WHERE job_id = ? AND EXISTS (SELECT 1 FROM jobs WHERE id = ? AND last_tx = ?)`)
+      .bind(now, job.id, job.id, tx),
+  ];
+  const next = await deps.transition(env, job, "qa",
+    { running_since: null, result_url: ok.fileUrl, result_r2_key: r2Key, provider_meta_json: JSON.stringify(meta) },
+    { provider: PIX, provider_task_id: job.provider_task_id, credits: meta.credits, r2_key: r2Key }, extra);
   return { job: next, status: "succeeded" };
 }

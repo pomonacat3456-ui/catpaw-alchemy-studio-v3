@@ -20,9 +20,20 @@ export interface Env {
   LIVE_BUDGET_SCOPE?: string; // default production-live (RunningHub coins)
   LIVE_COINS_5S?: string; // estimate per 5s H3 segment
   LIVE_COINS_15S?: string;
+  LIVE_POINTS_5S?: string; // plan 點數 estimate per 5s H3 segment (observed 54.23)
+  LIVE_POINTS_15S?: string;
+  LIVE_MANUAL_POINTS_BALANCE?: string; // only if the API stops returning remainPoint: owner-provided balance
   LIVE_MAX_JOB_COINS?: string;
   LIVE_TIMEOUT_SEC?: string;
   ASSETS_BUCKET?: R2Bucket;
+  // --- PixVerse native OpenAPI (production only, fail-closed) ---
+  PIXVERSE_API_KEY?: string; // secret
+  PIXVERSE_BASE_URL?: string; // default https://app-api.pixverse.ai/openapi/v2
+  PIXVERSE_MODEL?: string; // default v6-max
+  PIXVERSE_QUALITY?: string; // default 540p
+  LIVE_PIXVERSE_CREDITS_5S?: string; // estimate (v6-max 540p ~7 credits/s, audio off)
+  LIVE_PIXVERSE_CREDITS_15S?: string;
+  LIVE_PIXVERSE_MAX_CREDITS?: string; // hard cap reported by the provider per job
 }
 
 export type Line = "A" | "B" | "C" | "D";
@@ -86,6 +97,9 @@ export interface JobSpec {
   images: number; // B only
   audio_ref?: string; // C only
   prompt: string;
+  negative_prompt?: string; // built by the A-line prompt builder; never checked against FORBIDDEN terms (it lists them)
+  provider?: string; // optional override for line A: "runninghub-h3" (default) | "pixverse"
+  prompt_builder?: string; // e.g. "a-line-v2" when the prompt was built server-side from `look`
   client_ref?: string;
 }
 

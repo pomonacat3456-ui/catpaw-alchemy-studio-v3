@@ -66,7 +66,7 @@ async function health(env: Env) {
     live_max_submissions: Number(env.LIVE_MAX_SUBMISSIONS ?? 1),
     publish_gate: "closed",
     r2_bound: !!env.ASSETS_BUCKET,
-    secrets_configured: { admin_key: !!env.ADMIN_KEY, callback_hmac: !!env.CALLBACK_HMAC_SECRET, provider_key: !!env.RUNNINGHUB_API_KEY },
+    secrets_configured: { admin_key: !!env.ADMIN_KEY, callback_hmac: !!env.CALLBACK_HMAC_SECRET, provider_key: !!env.RUNNINGHUB_API_KEY, pixverse_key: !!env.PIXVERSE_API_KEY },
     time: new Date().toISOString(),
   }, d1 === "ok" ? 200 : 503);
 }
@@ -119,7 +119,10 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/admin/canon/live-override" && m === "POST") return json(await createLiveOverride(env, await readJson(req)), 201);
   if (p === "/api/admin/canon/live-override" && m === "GET")
     return json({ overrides: (await env.DB.prepare("SELECT * FROM canon_live_overrides ORDER BY created_at DESC LIMIT 20").all()).results });
-  if (p === "/api/provider/balance" && m === "GET") return json({ provider: "runninghub", read_only: true, balance: await providerBalance(env) });
+  if (p === "/api/provider/balance" && m === "GET") {
+    const prov = url.searchParams.get("provider") === "pixverse" ? "pixverse" : "runninghub";
+    return json({ provider: prov, read_only: true, balance: await providerBalance(env, prov) });
+  }
   if (p.startsWith("/api/assets/r2/") && m === "GET") {
     if (!env.ASSETS_BUCKET) throw new HttpError(404, "r2_not_bound");
     const obj = await env.ASSETS_BUCKET.get(decodeURIComponent(p.slice("/api/assets/r2/".length)));

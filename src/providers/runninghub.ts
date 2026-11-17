@@ -17,11 +17,13 @@ export class ProviderError extends Error {
   constructor(public code: string, public detail?: unknown) { super(code); }
 }
 
-export interface Balance { remainCoins: number; remainMoney: string | null; currency: string | null; currentTaskCounts: number | null }
+/** remainCoins (RH幣) and remainPoint (plan 點數) are SEPARATE pools; NORMAL (consumer) keys settle workflow tasks in POINT. */
+export interface Balance { remainCoins: number; remainPoint?: number | null; remainMoney: string | null; currency: string | null; currentTaskCounts: number | null; apiType?: string | null }
 export type OutputsResult =
   | { status: "running"; code: number }
   | { status: "failed"; code: number; reason: string }
-  | { status: "succeeded"; fileUrl: string; fileType: string; consumeCoins: number | null; taskCostTime: string | null };
+  | { status: "succeeded"; fileUrl: string; fileType: string; consumeCoins: number | null; taskCostTime: string | null;
+      settleMode?: string | null; chargedPoint?: number | null; consumeMoney?: string | null };
 
 export function h3NodeInfo(fileName: string, prompt: string, durationSec: number) {
   const [w, h] = [768, 1344]; // 9:16
@@ -59,7 +61,9 @@ export class RunningHubClient {
     if (!Number.isFinite(n)) throw new ProviderError("provider_balance_unparseable");
     return {
       remainCoins: n,
+      remainPoint: p.data.remainPoint != null && Number.isFinite(Number(p.data.remainPoint)) ? Number(p.data.remainPoint) : null,
       remainMoney: p.data.remainMoney ?? null,
+      apiType: p.data.apiType ?? null,
       currency: p.data.currency ?? null,
       currentTaskCounts: p.data.currentTaskCounts != null ? Number(p.data.currentTaskCounts) : null,
     };
@@ -97,6 +101,9 @@ export class RunningHubClient {
         fileType: String(v.fileType ?? "mp4"),
         consumeCoins: v.consumeCoins != null ? Number(v.consumeCoins) : null,
         taskCostTime: v.taskCostTime != null ? String(v.taskCostTime) : null,
+        settleMode: v.settleMode != null ? String(v.settleMode) : null,
+        chargedPoint: v.chargedPoint != null && Number.isFinite(Number(v.chargedPoint)) ? Number(v.chargedPoint) : null,
+        consumeMoney: v.consumeMoney != null ? String(v.consumeMoney) : null,
       };
     }
     return { status: "running", code };

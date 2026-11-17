@@ -33,3 +33,10 @@
 ## 收尾
 - 12:03 重新部署 LIVE_PROVIDERS_ENABLED="false"，刪除 OWNER_LIVE_APPROVAL_ID secret；/health `live_providers:false`、`live_gate_reason: live_providers_not_enabled`。
 - 未發布任何內容；staging 未動。
+
+## 補記（13:10 Asia/Taipei）：H3 實際扣點與 PixVerse 路線
+- H3 task 2122539141694840833 實際以「點數方案」結算：`/openapi/v2/query` usage `settleMode=POINT`、`chargedPoint=54.23`，RH幣 0、錢包 $0（owner 帳單截圖一致）。accountStatus 同帳號（apiType=NORMAL 消費級-會員 key），`remainPoint`=點數池、`remainCoins`=RH幣（獨立池）、`remainMoney`=錢包。
+- 已修正 production D1：該 job 的 provider_charge = 54.23，scope `runninghub_points`；provider_meta 加 settle_mode/charged_point。
+- 程式：NORMAL key 的餘額檢查改用 `remainPoint`（LIVE_POINTS_5S 預設 60）；API 若不回 remainPoint 則 fail-closed，除非 owner 提供 `LIVE_MANUAL_POINTS_BALANCE`。完成時記錄 chargedPoint / point_delta。
+- PixVerse：RunningHub 有 `POST /openapi/v2/pixverse-v6/image-to-video`（標準模型 API），但官方文件明定「模型 API 僅支援企業級-共享 API Key」（錯誤碼 1014），計費走錢包；本 key 為 NORMAL、錢包 $0 → 不可用。PixVerse 原生 OpenAPI 需要 PIXVERSE_API_KEY（box 上沒有）。已實作原生 adapter（mock 測試），未送出任何 PixVerse 任務。
+- A 線 prompt builder a-line-v2：貓掌肉球、貓臉、全母喵、布袋戲偶材質、端莊服裝，negative prompt 獨立欄位。

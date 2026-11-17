@@ -12,6 +12,7 @@ const MASTER = "https://images.example.test/canon/MZ_T01_master.png";
 const realFetch = providerDeps.fetch;
 let calls: { url: string; body?: string }[] = [];
 let balance = "698";
+let point = 17587.77;
 let outputsSeq: any[] = [];
 
 function mockFetch() {
@@ -20,7 +21,7 @@ function mockFetch() {
     const body = init?.body && typeof init.body === "string" ? init.body : undefined;
     calls.push({ url, body });
     const J = (o: unknown) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
-    if (url.endsWith("/uc/openapi/accountStatus")) return J({ code: 0, data: { remainCoins: balance, remainMoney: "0.0000", currency: "USD", currentTaskCounts: "0" } });
+    if (url.endsWith("/uc/openapi/accountStatus")) return J({ code: 0, data: { remainCoins: balance, remainPoint: point, remainMoney: "0.0000", currency: "USD", currentTaskCounts: "0", apiType: "NORMAL" } });
     if (url === MASTER) return new Response(new Uint8Array(4096), { headers: { "content-type": "image/png" } });
     if (url.startsWith("https://drive.google.com/")) return new Response("<html>login</html>", { headers: { "content-type": "text/html" } });
     if (url.endsWith("/task/openapi/upload")) return J({ code: 0, data: { fileName: "api/uploaded_master.png" } });
@@ -63,7 +64,7 @@ async function liveQueued(e: any, over: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
-  calls = []; balance = "698"; outputsSeq = [];
+  calls = []; balance = "698"; point = 17587.77; outputsSeq = [];
   mockFetch();
   await DB.prepare("UPDATE budgets SET reserved = 0, spent = 0 WHERE scope IN ('production-live','production-mock')").run();
   await DB.prepare("UPDATE budgets SET limit_credits = 400 WHERE scope = 'production-live'").run();
@@ -132,7 +133,7 @@ describe("live RunningHub adapter (mocked fetch)", () => {
 
   it("insufficient balance: 402, no upload/create, claim released, job stays queued", async () => {
     const e = await prodEnv();
-    balance = "100";
+    balance = "100"; point = 20;
     const job = await liveQueued(e);
     await expect(run(e, job)).rejects.toThrow("provider_balance_insufficient");
     expect(calls.some((c) => c.url.endsWith("/create") || c.url.endsWith("/upload"))).toBe(false);
@@ -239,7 +240,7 @@ describe("live RunningHub adapter (mocked fetch)", () => {
     const e = await prodEnv();
     const { override } = await createLiveOverride(e, { character_id: "MZ_T02", master_url: MASTER, approver: "owner 2026-11-17 11:50" });
     const j = await liveQueued(e, { protagonist: "MZ_T02", master_url: MASTER });
-    balance = "10";
+    balance = "10"; point = 10;
     await expect(run(e, j)).rejects.toThrow("provider_balance_insufficient");
     const ov = await DB.prepare("SELECT used_count FROM canon_live_overrides WHERE id = ?").bind(override.id).first<any>();
     expect(ov.used_count).toBe(0);
@@ -265,5 +266,34 @@ describe("live RunningHub adapter (mocked fetch)", () => {
     const ran = await run(e, j);
     expect(ran.state).toBe("running");
     expect(calls.some((c: any) => String(c.url ?? c).startsWith(ORIGIN))).toBe(false);
+  });
+
+  it("H3 on a NORMAL key settles in the 點數 (POINT) pool: chargedPoint + point delta recorded, coins untouched", async () => {
+    const e = await prodEnv();
+    await DB.prepare("UPDATE budgets SET limit_credits = 2000 WHERE scope = 'production-live'").run();
+    let job = await liveQueued(e);
+    job = await run(e, job);
+    point = 17533.54;
+    outputsSeq = [{ code: 0, data: [{ fileUrl: "https://rh-cdn.example.test/out/video.mp4", fileType: "mp4", consumeCoins: null, taskCostTime: "0", settleMode: "POINT", chargedPoint: "54.23" }] }];
+    const r = await livePoll(e, job, { transition, failOrRetry });
+    const meta = JSON.parse(r.job.provider_meta_json!);
+    expect(meta.settle_mode).toBe("POINT");
+    expect(meta.charged_point).toBe(54.23);
+    expect(meta.point_delta).toBe(54.23);
+    expect(meta.balance_delta).toBe(0);
+    expect(meta.balance_before.apiType).toBe("NORMAL");
+    const c = await DB.prepare("SELECT scope, credits FROM costs WHERE job_id = ? AND kind = 'provider_charge'").bind(job.id).first<any>();
+    expect(c).toEqual({ scope: "runninghub_points", credits: 54.23 });
+  });
+
+  it("balance check uses the 點數 pool for NORMAL keys; fails closed without remainPoint unless owner-provided", async () => {
+    const { rhBalanceCheck } = await import("../src/live");
+    const e: any = { LIVE_POINTS_5S: "60" };
+    expect(rhBalanceCheck(e, { remainCoins: 0, remainPoint: 17587.77, apiType: "NORMAL", remainMoney: "0", currency: "USD", currentTaskCounts: 0 }, [5]).ok).toBe(true);
+    expect(rhBalanceCheck(e, { remainCoins: 698, remainPoint: 30, apiType: "NORMAL", remainMoney: "0", currency: "USD", currentTaskCounts: 0 }, [5]).ok).toBe(false);
+    const none = rhBalanceCheck(e, { remainCoins: 698, remainPoint: null, apiType: "NORMAL", remainMoney: "0", currency: "USD", currentTaskCounts: 0 }, [5]);
+    expect(none).toMatchObject({ ok: false, reason: "points_balance_unavailable_owner_must_provide" });
+    expect(rhBalanceCheck({ ...e, LIVE_MANUAL_POINTS_BALANCE: "500" }, { remainCoins: 0, remainPoint: null, apiType: "NORMAL", remainMoney: "0", currency: "USD", currentTaskCounts: 0 }, [5])).toMatchObject({ ok: true, source: "owner_manual" });
+    expect(rhBalanceCheck(e, { remainCoins: 698, remainPoint: 0, apiType: "SHARED", remainMoney: "0", currency: "USD", currentTaskCounts: 0 }, [5])).toMatchObject({ ok: true, pool: "coins" });
   });
 });
