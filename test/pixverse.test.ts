@@ -6,7 +6,8 @@ import { createLiveOverride, syncCanon } from "../src/canon";
 import { parseSpec } from "../src/lib/validate";
 import { providerDeps } from "../src/providers/runninghub";
 import { pixGeneratePayload } from "../src/providers/pixverse";
-import { DB, uniq } from "./helpers";
+import { DB, fakeMp4, uniq } from "./helpers";
+import { autoVideoQa, probeMp4 } from "../src/lib/video";
 
 const PKEY = "pix-test-key-SHOULD-NEVER-BE-STORED";
 const BASE = "https://pix.example.test/openapi/v2";
@@ -15,6 +16,7 @@ const realFetch = providerDeps.fetch;
 let calls: { url: string; body?: string; headers?: any }[] = [];
 let credits = 2070;
 let results: any[] = [];
+let mp4Body: Uint8Array = fakeMp4(592, 1024, 5.04);
 let generateResp: any = { ErrCode: 0, Resp: { video_id: 432658773528999, credits: 35 } };
 
 function mockFetch() {
@@ -27,7 +29,7 @@ function mockFetch() {
     if (url === `${BASE}/image/upload`) return J({ ErrCode: 0, Resp: { img_id: 894905555 } });
     if (url === `${BASE}/video/img/generate`) return J(generateResp);
     if (url.startsWith(`${BASE}/video/result/`)) return J(results.shift() ?? { ErrCode: 0, Resp: { status: 5 } });
-    if (url === "https://media.pix.example.test/out.mp4") return new Response(new Uint8Array(8192), { headers: { "content-type": "video/mp4" } });
+    if (url === "https://media.pix.example.test/out.mp4") return new Response(mp4Body, { headers: { "content-type": "video/mp4" } });
     return new Response("unexpected " + url, { status: 599 });
   }) as typeof fetch;
 }
@@ -50,6 +52,7 @@ async function pixQueued(e: any, over: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
+  mp4Body = fakeMp4(592, 1024, 5.04);
   calls = []; credits = 2070; results = [];
   generateResp = { ErrCode: 0, Resp: { video_id: 432658773528999, credits: 35 } };
   mockFetch();
@@ -94,7 +97,8 @@ describe("PixVerse native live adapter (mocked fetch)", () => {
     results.push({ ErrCode: 0, Resp: { status: 1, url: "https://media.pix.example.test/out.mp4", credits: 35, outputWidth: 592, outputHeight: 1024, seed: 1 } });
     const done = await livePoll(e, await getJob(e, job.id), { transition, failOrRetry });
     expect(done.status).toBe("succeeded");
-    expect(done.job.state).toBe("qa");
+    expect(done.job.state).toBe("review");
+    expect(JSON.parse(done.job.qa_json!).auto).toBe(true);
     expect(done.job.result_r2_key).toBe(`live/${job.id}/432658773528999.mp4`);
     const meta = JSON.parse(done.job.provider_meta_json!);
     expect(meta.balance_before.credits).toBe(2070);
@@ -137,6 +141,18 @@ describe("PixVerse native live adapter (mocked fetch)", () => {
     await expect(run(e, b)).rejects.toThrow("live_submission_cap_reached");
   });
 
+  it("auto video QA failure (wrong ratio / not an mp4) -> failed, no paid retry", async () => {
+    const e = await prodEnv();
+    const job = await run(e, await pixQueued(e));
+    mp4Body = fakeMp4(1024, 1024, 5);
+    results.push({ ErrCode: 0, Resp: { status: 1, url: "https://media.pix.example.test/out.mp4", credits: 45 } });
+    const r = await livePoll(e, job, { transition, failOrRetry });
+    expect(r.status).toBe("auto_qa_failed");
+    expect(r.job.state).toBe("failed");
+    expect(r.job.last_error).toMatch(/aspect_not_9:16/);
+    expect(r.job.result_r2_key).toBe(`live/${job.id}/432658773528999.mp4`);
+  });
+
   it("moderation/failed result -> failed, no auto-retry", async () => {
     const e = await prodEnv();
     let job = await pixQueued(e);
@@ -158,5 +174,18 @@ describe("PixVerse native live adapter (mocked fetch)", () => {
     expect(ran.state).toBe("running");
     const ov = await DB.prepare("SELECT used_count FROM canon_live_overrides WHERE id = ?").bind(override.id).first<any>();
     expect(ov.used_count).toBe(1);
+  });
+});
+
+describe("mp4 probe / auto video QA", () => {
+  it("reads duration + track size and enforces ~5s, 9:16, decodable", () => {
+    const b = (u: Uint8Array) => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer;
+    expect(probeMp4(b(fakeMp4(592, 1024, 5.04)))).toMatchObject({ width: 592, height: 1024, brand: "isom" });
+    expect(autoVideoQa(b(fakeMp4(592, 1024, 5.04))).ok).toBe(true);
+    expect(autoVideoQa(b(fakeMp4(768, 1344, 5.17))).ok).toBe(true);
+    expect(autoVideoQa(b(fakeMp4(592, 1024, 8))).failed[0]).toMatch(/^duration_off/);
+    expect(autoVideoQa(b(fakeMp4(288, 512, 5))).failed[0]).toMatch(/^resolution_too_low/);
+    expect(autoVideoQa(new Uint8Array(60000).buffer).failed).toContain("not_a_decodable_mp4");
+    expect(autoVideoQa(new Uint8Array(8192).buffer).failed[0]).toMatch(/^file_too_small/);
   });
 });

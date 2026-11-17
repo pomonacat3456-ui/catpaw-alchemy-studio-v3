@@ -81,3 +81,19 @@ export const allPass = (line: string) =>
 export async function resetBudget(limit = 200) {
   await DB.prepare("UPDATE budgets SET limit_credits = ?, reserved = 0, spent = 0 WHERE scope = 'staging-mock'").bind(limit).run();
 }
+
+/** Synthetic ISO-BMFF mp4 header (ftyp + moov/mvhd + trak/tkhd), padded to `size` bytes; enough for probeMp4. */
+export function fakeMp4(width: number, height: number, seconds: number, size = 60_000): Uint8Array {
+  const box = (type: string, body: Uint8Array) => {
+    const b = new Uint8Array(8 + body.length); const dv = new DataView(b.buffer);
+    dv.setUint32(0, b.length); for (let i = 0; i < 4; i++) b[4 + i] = type.charCodeAt(i); b.set(body, 8); return b;
+  };
+  const cat = (...a: Uint8Array[]) => { const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let p = 0; for (const x of a) { o.set(x, p); p += x.length; } return o; };
+  const ftyp = box("ftyp", new Uint8Array([105, 115, 111, 109, 0, 0, 2, 0]));
+  const mv = new Uint8Array(100); const mdv = new DataView(mv.buffer); mdv.setUint32(12, 1000); mdv.setUint32(16, Math.round(seconds * 1000));
+  const tk = new Uint8Array(84); const tdv = new DataView(tk.buffer); tdv.setUint32(76, width * 65536); tdv.setUint32(80, height * 65536);
+  const moov = box("moov", cat(box("mvhd", mv), box("trak", box("tkhd", tk))));
+  const head = cat(ftyp, moov);
+  const mdat = box("mdat", new Uint8Array(Math.max(0, size - head.length - 8)));
+  return cat(head, mdat);
+}

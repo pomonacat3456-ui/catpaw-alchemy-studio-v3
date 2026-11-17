@@ -1,5 +1,6 @@
 import { HttpError, type Env, type JobRow, type JobSpec } from "./types";
 import { LIVE_PROVIDERS_LINE_A, LIVE_PROVIDERS_LINE_B, liveAllowed } from "./lib/validate";
+import { autoVideoQa } from "./lib/video";
 import { autoImageQa } from "./lib/image";
 import { PixVerseClient, pixGeneratePayload, type PixBalance } from "./providers/pixverse";
 import { DEFAULT_H3_WORKFLOW_ID, DEFAULT_NB_WEBAPP_ID, DEFAULT_QWEN_WEBAPP_ID, IMAGE_TYPES, nbNodeInfo, qwenNodeInfo, ProviderError, RunningHubClient, h3NodeInfo, providerDeps, type Balance } from "./providers/runninghub";
@@ -302,11 +303,19 @@ async function pixPoll(env: Env, job: JobRow, deps: PollDeps): Promise<{ job: Jo
   meta.credits = ok.credits ?? meta.credits_reported_at_submit ?? null;
   meta.output = { width: ok.width, height: ok.height, seed: ok.seed };
   let r2Key: string | null = null;
+  let autoQa: ReturnType<typeof autoVideoQa> | null = null;
   const dl = await providerDeps.fetch(ok.fileUrl);
-  if (dl.ok && env.ASSETS_BUCKET) {
-    r2Key = `live/${job.id}/${job.provider_task_id}.mp4`;
-    await env.ASSETS_BUCKET.put(r2Key, dl.body, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { jobId: job.id, taskId: job.provider_task_id!, provider: PIX } });
-  } else if (!dl.ok) meta.download_error = dl.status;
+  if (!dl.ok) meta.download_error = dl.status;
+  else {
+    const buf = await dl.arrayBuffer();
+    const spec = JSON.parse(job.spec_json || "{}");
+    autoQa = autoVideoQa(buf, { seconds: Number(spec?.segments?.[0] ?? 5) });
+    meta.auto_qa = autoQa;
+    if (env.ASSETS_BUCKET) {
+      r2Key = `live/${job.id}/${job.provider_task_id}.mp4`;
+      await env.ASSETS_BUCKET.put(r2Key, buf, { httpMetadata: { contentType: "video/mp4" }, customMetadata: { jobId: job.id, taskId: job.provider_task_id!, provider: PIX } });
+    }
+  }
   const credits = meta.credits ?? meta.balance_delta ?? job.reserved_credits;
   const now = new Date().toISOString();
   const extra = (tx: string) => [
@@ -322,5 +331,15 @@ async function pixPoll(env: Env, job: JobRow, deps: PollDeps): Promise<{ job: Jo
   const next = await deps.transition(env, job, "qa",
     { running_since: null, result_url: ok.fileUrl, result_r2_key: r2Key, provider_meta_json: JSON.stringify(meta) },
     { provider: PIX, provider_task_id: job.provider_task_id, credits: meta.credits, r2_key: r2Key }, extra);
-  return { job: next, status: "succeeded" };
+  // Automated technical QA (owner accepts MZ_003 costume/hands): decodable mp4, ~duration, ~9:16, size, provider ok.
+  const failed = !r2Key ? ["not_stored"] : autoQa ? autoQa.failed : ["download_failed"];
+  const rec = { auto: true, checks: { file_ok: !failed.some((f) => /decodable|small|download|stored/.test(f)), duration_ok: !failed.some((f) => f.startsWith("duration")),
+    aspect_ok: !failed.some((f) => f.startsWith("aspect")), size_ok: !failed.some((f) => f.startsWith("resolution")), provider_ok: true },
+    failed, info: autoQa?.info ?? null, notes: "auto technical QA (line A video); content accepted by owner 2026-11-17 for MZ_003", at: now };
+  if (failed.length) {
+    await env.DB.prepare("UPDATE jobs SET qa_json = ? WHERE id = ?").bind(JSON.stringify(rec), job.id).run();
+    const fresh = await env.DB.prepare("SELECT * FROM jobs WHERE id = ?").bind(job.id).first<JobRow>();
+    return { job: await deps.failOrRetry(env, fresh!, `auto_qa_failed:${failed.join(",")}`), status: "auto_qa_failed" };
+  }
+  return { job: await deps.transition(env, next, "review", { qa_json: JSON.stringify(rec) }, rec), status: "succeeded" };
 }
